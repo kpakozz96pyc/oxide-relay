@@ -259,6 +259,69 @@ Translation delivery for backend applications.
 
 In MVP, translation delivery endpoints are public and do not use session authentication.
 
+---
+
+# Runtime Configuration
+
+Configuration precedence is:
+
+```text
+CLI arguments
+→ environment variables
+→ config.toml
+→ built-in defaults
+```
+
+Supported runtime settings:
+
+```text
+OXIDERELAY_HOST
+OXIDERELAY_PORT
+OXIDERELAY_DATABASE_PATH
+OXIDERELAY_SESSION_COOKIE_NAME
+OXIDERELAY_SESSION_TTL_HOURS
+OXIDERELAY_SESSION_COOKIE_SECURE
+OXIDERELAY_ADMIN_EMAIL
+OXIDERELAY_ADMIN_PASSWORD
+```
+
+Session defaults:
+
+```text
+cookie_name = oxiderelay_session
+ttl_hours = 168
+cookie_secure = false
+```
+
+For local development, keep `cookie_secure=false`.
+
+For HTTPS deployments, set `OXIDERELAY_SESSION_COOKIE_SECURE=true`.
+
+---
+
+# Local Startup
+
+Backend:
+
+```bash
+cargo run -p oxiderelay-backend -- --config backend/config.toml.example
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm run dev
+```
+
+The Vite dev server proxies `/api` and `/static` to the backend on `127.0.0.1:8081`.
+
+---
+
+# Operations
+
+Operational runbook details live in [deploy/OPERATIONS.md](deploy/OPERATIONS.md).
+
 Admin API endpoints use cookie-based session authentication.
 
 Example:

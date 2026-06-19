@@ -1,0 +1,490 @@
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHash, PasswordVerifier},
+};
+use axum::{
+    Json,
+    extract::State,
+    http::{
+        HeaderMap, HeaderValue, StatusCode,
+        header::{COOKIE, SET_COOKIE},
+    },
+    response::IntoResponse,
+};
+use serde::{Deserialize, Serialize};
+use sqlx::{FromRow, query_scalar};
+use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
+use utoipa::ToSchema;
+use uuid::Uuid;
+
+use crate::{
+    app::AppState,
+    errors::{ApiError, AppResult},
+};
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/login",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, body = AuthResponse),
+        (status = 400, body = crate::errors::ErrorResponse),
+        (status = 401, body = crate::errors::ErrorResponse)
+    )
+)]
+pub async fn login(
+    State(state): State<AppState>,
+    Json(payload): Json<LoginRequest>,
+) -> AppResult<impl IntoResponse> {
+    let email = payload.email.trim().to_lowercase();
+    if email.is_empty() || payload.password.is_empty() {
+        return Err(ApiError::validation("Email and password are required."));
+    }
+
+    let user = sqlx::query_as::<_, UserRecord>(
+        r#"
+        SELECT id, email, password_hash, display_name, is_active
+        FROM users
+        WHERE email = ?1
+        "#,
+    )
+    .bind(&email)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|error| ApiError::from_sqlx(error, "Unable to load the user."))?
+    .ok_or_else(|| ApiError::unauthorized("Invalid email or password."))?;
+
+    if !user.is_active {
+        return Err(ApiError::unauthorized("This user is inactive."));
+    }
+
+    verify_password(&payload.password, &user.password_hash)?;
+
+    let session_id = Uuid::new_v4().to_string();
+    let created_at = now_utc()?;
+    let expires_at = future_utc(state.session_ttl_hours)?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO sessions (id, user_id, expires_at, created_at)
+        VALUES (?1, ?2, ?3, ?4)
+        "#,
+    )
+    .bind(&session_id)
+    .bind(&user.id)
+    .bind(&expires_at)
+    .bind(&created_at)
+    .execute(&state.pool)
+    .await
+    .map_err(|error| ApiError::from_sqlx(error, "Unable to create a session."))?;
+
+    let cookie = build_session_cookie(
+        &state.session_cookie_name,
+        &session_id,
+        state.session_ttl_hours,
+        state.session_cookie_secure,
+    )?;
+
+    let mut response = Json(AuthResponse {
+        user: AuthenticatedUser {
+            id: user.id,
+            email: user.email,
+            display_name: user.display_name,
+        },
+    })
+    .into_response();
+
+    response.headers_mut().insert(SET_COOKIE, cookie);
+
+    Ok(response)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/logout",
+    responses(
+        (status = 204),
+        (status = 500, body = crate::errors::ErrorResponse)
+    )
+)]
+pub async fn logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
+    if let Some(session_id) = read_session_cookie(&headers, &state.session_cookie_name) {
+        sqlx::query("DELETE FROM sessions WHERE id = ?1")
+            .bind(session_id)
+            .execute(&state.pool)
+            .await
+            .map_err(|error| ApiError::from_sqlx(error, "Unable to clear the session."))?;
+    }
+
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    response.headers_mut().insert(
+        SET_COOKIE,
+        clear_session_cookie(&state.session_cookie_name, state.session_cookie_secure)?,
+    );
+
+    Ok(response)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/me",
+    responses(
+        (status = 200, body = MeResponse),
+        (status = 401, body = crate::errors::ErrorResponse)
+    )
+)]
+pub async fn me(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Json<MeResponse>> {
+    let user = authenticated_user(&state, &headers).await?;
+    Ok(Json(MeResponse { user }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/me/permissions",
+    responses(
+        (status = 200, body = MePermissionsResponse),
+        (status = 401, body = crate::errors::ErrorResponse)
+    )
+)]
+pub async fn me_permissions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> AppResult<Json<MePermissionsResponse>> {
+    let user = authenticated_user(&state, &headers).await?;
+    let permissions = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT p.code
+        FROM user_permissions up
+        JOIN permissions p ON p.id = up.permission_id
+        WHERE up.user_id = ?1
+        ORDER BY p.code
+        "#,
+    )
+    .bind(&user.id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|error| {
+        ApiError::from_sqlx(error, "Unable to load the current user's permissions.")
+    })?;
+
+    Ok(Json(MePermissionsResponse { permissions }))
+}
+
+pub async fn authenticated_user(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> AppResult<AuthenticatedUser> {
+    let session_id = read_session_cookie(headers, &state.session_cookie_name)
+        .ok_or_else(|| ApiError::unauthorized("Authentication is required."))?;
+    let now = now_utc()?;
+
+    let user = sqlx::query_as::<_, AuthenticatedUser>(
+        r#"
+        SELECT u.id, u.email, u.display_name
+        FROM sessions s
+        JOIN users u ON u.id = s.user_id
+        WHERE s.id = ?1
+          AND s.expires_at > ?2
+          AND u.is_active = 1
+        "#,
+    )
+    .bind(&session_id)
+    .bind(now)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|error| ApiError::from_sqlx(error, "Unable to load the current user."))?
+    .ok_or_else(|| ApiError::unauthorized("Authentication is required."))?;
+
+    Ok(user)
+}
+
+pub async fn require_permission(
+    state: &AppState,
+    user_id: &str,
+    permission_code: &str,
+) -> AppResult<()> {
+    let count: i64 = query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM user_permissions up
+        JOIN permissions p ON p.id = up.permission_id
+        WHERE up.user_id = ?1
+          AND p.code = ?2
+        "#,
+    )
+    .bind(user_id)
+    .bind(permission_code)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|error| ApiError::from_sqlx(error, "Unable to resolve permissions."))?;
+
+    if count == 0 {
+        return Err(ApiError::permission_denied(format!(
+            "Missing required permission: {permission_code}."
+        )));
+    }
+
+    Ok(())
+}
+
+pub async fn authorize_project(
+    state: &AppState,
+    user: &AuthenticatedUser,
+    project_slug: &str,
+    permission_code: &str,
+) -> AppResult<AuthorizedProject> {
+    let project = sqlx::query_as::<_, AuthorizedProject>(
+        r#"
+        SELECT
+            p.id,
+            p.name,
+            p.slug,
+            p.description,
+            p.owner_user_id,
+            p.created_at,
+            p.updated_at,
+            CASE WHEN p.owner_user_id = ?1 THEN 1 ELSE 0 END AS is_owner,
+            CASE WHEN upa.user_id IS NOT NULL THEN 1 ELSE 0 END AS has_access
+        FROM projects p
+        LEFT JOIN user_project_access upa
+            ON upa.project_id = p.id
+           AND upa.user_id = ?1
+        WHERE p.slug = ?2
+        "#,
+    )
+    .bind(&user.id)
+    .bind(project_slug)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|error| ApiError::from_sqlx(error, "Unable to load the project."))?
+    .ok_or_else(|| ApiError::not_found("Project was not found."))?;
+
+    if project.is_owner {
+        return Ok(project);
+    }
+
+    if !project.has_access {
+        return Err(ApiError::not_found("Project was not found."));
+    }
+
+    require_permission(state, &user.id, permission_code).await?;
+
+    Ok(project)
+}
+
+pub async fn require_environment_permission(
+    state: &AppState,
+    user: &AuthenticatedUser,
+    project: &AuthorizedProject,
+    access_kind: EnvironmentAccessKind,
+    environment_slug: &str,
+) -> AppResult<()> {
+    if project.is_owner {
+        return Ok(());
+    }
+
+    let permission_code = match access_kind {
+        EnvironmentAccessKind::Read => read_environment_permission_code(environment_slug),
+        EnvironmentAccessKind::Edit => edit_environment_permission_code(environment_slug),
+    }
+    .ok_or_else(|| ApiError::validation("Unsupported environment slug."))?;
+
+    require_permission(state, &user.id, permission_code).await
+}
+
+fn read_session_cookie(headers: &HeaderMap, cookie_name: &str) -> Option<String> {
+    headers.get(COOKIE).and_then(|header| {
+        header.to_str().ok().and_then(|value| {
+            value.split(';').find_map(|part| {
+                let trimmed = part.trim();
+                let (name, value) = trimmed.split_once('=')?;
+                if name == cookie_name {
+                    Some(value.to_owned())
+                } else {
+                    None
+                }
+            })
+        })
+    })
+}
+
+fn verify_password(password: &str, password_hash: &str) -> AppResult<()> {
+    let parsed = PasswordHash::new(password_hash)
+        .map_err(|_| ApiError::unauthorized("Invalid email or password."))?;
+
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .map_err(|_| ApiError::unauthorized("Invalid email or password."))?;
+
+    Ok(())
+}
+
+fn build_session_cookie(
+    cookie_name: &str,
+    session_id: &str,
+    ttl_hours: i64,
+    cookie_secure: bool,
+) -> AppResult<HeaderValue> {
+    let max_age = ttl_hours
+        .checked_mul(60 * 60)
+        .ok_or_else(|| ApiError::internal("Invalid session lifetime."))?;
+
+    let secure = if cookie_secure { "; Secure" } else { "" };
+
+    HeaderValue::from_str(&format!(
+        "{cookie_name}={session_id}; Path=/; HttpOnly; Max-Age={max_age}; SameSite=Lax{secure}"
+    ))
+    .map_err(|_| ApiError::internal("Unable to serialize the session cookie."))
+}
+
+fn clear_session_cookie(cookie_name: &str, cookie_secure: bool) -> AppResult<HeaderValue> {
+    let secure = if cookie_secure { "; Secure" } else { "" };
+    HeaderValue::from_str(&format!(
+        "{cookie_name}=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax{secure}"
+    ))
+    .map_err(|_| ApiError::internal("Unable to clear the session cookie."))
+}
+
+fn now_utc() -> AppResult<String> {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .map_err(|error| ApiError::internal(format!("Unable to format current time: {error}")))
+}
+
+fn future_utc(ttl_hours: i64) -> AppResult<String> {
+    (OffsetDateTime::now_utc() + Duration::hours(ttl_hours))
+        .format(&Rfc3339)
+        .map_err(|error| ApiError::internal(format!("Unable to format expiration time: {error}")))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AuthResponse {
+    pub user: AuthenticatedUser,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MeResponse {
+    pub user: AuthenticatedUser,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MePermissionsResponse {
+    pub permissions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, FromRow, ToSchema)]
+pub struct AuthenticatedUser {
+    pub id: String,
+    pub email: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, FromRow)]
+struct UserRecord {
+    id: String,
+    email: String,
+    password_hash: String,
+    display_name: String,
+    is_active: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum EnvironmentAccessKind {
+    Read,
+    Edit,
+}
+
+fn read_environment_permission_code(environment_slug: &str) -> Option<&'static str> {
+    match environment_slug {
+        "development" => Some("ReadDevelopment"),
+        "staging" => Some("ReadStaging"),
+        "production" => Some("ReadProduction"),
+        _ => None,
+    }
+}
+
+fn edit_environment_permission_code(environment_slug: &str) -> Option<&'static str> {
+    match environment_slug {
+        "development" => Some("EditDevelopment"),
+        "staging" => Some("EditStaging"),
+        "production" => Some("EditProduction"),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct AuthorizedProject {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub description: Option<String>,
+    pub owner_user_id: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub is_owner: bool,
+    pub has_access: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn environment_permission_codes_match_supported_slugs() {
+        assert_eq!(
+            read_environment_permission_code("development"),
+            Some("ReadDevelopment")
+        );
+        assert_eq!(
+            read_environment_permission_code("staging"),
+            Some("ReadStaging")
+        );
+        assert_eq!(
+            read_environment_permission_code("production"),
+            Some("ReadProduction")
+        );
+        assert_eq!(
+            edit_environment_permission_code("development"),
+            Some("EditDevelopment")
+        );
+        assert_eq!(
+            edit_environment_permission_code("staging"),
+            Some("EditStaging")
+        );
+        assert_eq!(
+            edit_environment_permission_code("production"),
+            Some("EditProduction")
+        );
+        assert_eq!(read_environment_permission_code("prod"), None);
+        assert_eq!(edit_environment_permission_code("qa"), None);
+    }
+
+    #[test]
+    fn session_cookie_serialization_respects_secure_flag() {
+        let plain = build_session_cookie("oxide", "session-id", 24, false).expect("cookie");
+        let plain = plain.to_str().expect("cookie str");
+        assert!(plain.contains("oxide=session-id"));
+        assert!(plain.contains("Max-Age=86400"));
+        assert!(!plain.contains("Secure"));
+
+        let secure = build_session_cookie("oxide", "session-id", 24, true).expect("cookie");
+        assert!(secure.to_str().expect("cookie str").contains("Secure"));
+    }
+
+    #[test]
+    fn clear_cookie_respects_secure_flag() {
+        let cookie = clear_session_cookie("oxide", true).expect("cookie");
+        let cookie = cookie.to_str().expect("cookie str");
+        assert!(cookie.contains("Max-Age=0"));
+        assert!(cookie.contains("Secure"));
+    }
+}

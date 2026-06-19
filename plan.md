@@ -221,6 +221,7 @@
 - Import and export actions for JSON files.
 
 ### Task 9.5: Integrate frontend permissions behavior
+- Status: Completed
 - Hide or disable actions the current user cannot perform.
 - Keep backend authorization as the source of truth.
 - Show clear errors when requests are forbidden.
@@ -228,23 +229,27 @@
 ## Phase 10: Testing and Hardening
 
 ### Task 10.1: Add backend unit tests
+- Status: Completed
 - Test permission resolution logic.
 - Test owner implicit access behavior.
 - Test slug and key validation.
 - Test import and export behavior.
 
 ### Task 10.2: Add backend integration tests
+- Status: Completed
 - Test auth flows end to end.
 - Test protected admin routes.
 - Test project creation transaction behavior.
 - Test public delivery endpoints.
 
 ### Task 10.3: Add frontend tests
+- Status: Completed
 - Test auth flow, route protection, and key UI states.
 - Test translation management interactions.
 - Test permission-based UI gating.
 
 ### Task 10.4: Add smoke checks
+- Status: Completed
 - Verify application startup with empty database bootstrap.
 - Verify startup with existing users and without bootstrap admin variables.
 - Verify Dockerized run path and persisted SQLite file behavior.
@@ -252,19 +257,26 @@
 ## Phase 11: Deployment and Operations
 
 ### Task 11.1: Finalize runtime configuration
+- Status: Completed
 - Support host, port, and database path configuration.
 - Define session cookie settings for local and deployed environments.
 - Document required and optional settings.
 
 ### Task 11.2: Finalize container packaging
+- Status: Completed
 - Build production Docker image.
 - Ensure writable data path for SQLite storage.
 - Expose the correct port and startup command.
 
 ### Task 11.3: Prepare operational documentation
+- Status: Completed
 - Document bootstrap procedure.
 - Document backup and restore strategy for SQLite.
 - Document migration behavior and upgrade expectations.
+
+## Current Remaining Work
+
+- No open implementation items remain for the MVP plan.
 
 ## Recommended Execution Order
 

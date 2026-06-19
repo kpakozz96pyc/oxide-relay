@@ -1,0 +1,15 @@
+[server]
+host = "127.0.0.1"
+port = "8080"
+
+[database]
+path = "./data/oxiderelay.sqlite"
+
+[session]
+cookie_name = "oxiderelay_session"
+ttl_hours = "168"
+cookie_secure = "false"
+
+[bootstrap_admin]
+email = "admin@example.com"
+password = "change-me"

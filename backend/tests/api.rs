@@ -10,7 +10,10 @@ use axum::{
 use http_body_util::BodyExt;
 use oxiderelay_backend::{
     app::AppState,
-    config::{BootstrapAdminSettings, DatabaseSettings, ServerSettings, SessionSettings, Settings},
+    config::{
+        BootstrapAdminSettings, DatabaseSettings, FrontendSettings, ServerSettings,
+        SessionSettings, Settings,
+    },
     db, http,
 };
 use rand_core::OsRng;
@@ -212,6 +215,30 @@ async fn public_delivery_endpoints_return_expected_payloads() {
     );
     let static_body = json_body(static_response).await;
     assert_eq!(static_body["button.save"], "Сохранить");
+}
+
+#[tokio::test]
+async fn root_returns_backend_message_when_frontend_bundle_is_missing() {
+    let harness = TestHarness::new().await;
+
+    let response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    assert_eq!(body, "OxideRelay backend is running.");
 }
 
 #[tokio::test]
@@ -591,12 +618,18 @@ impl TestHarness {
                 email: Some("admin@example.com".to_owned()),
                 password: Some("admin-password".to_owned()),
             },
+            frontend: FrontendSettings {
+                dist_path: temp_dir.path().join("missing-frontend-dist"),
+            },
         };
 
         let pool = db::initialize(&settings)
             .await
             .expect("database initialization");
-        let app = http::router(AppState::new(pool.clone(), settings.session.clone()));
+        let app = http::router(
+            AppState::new(pool.clone(), settings.session.clone()),
+            settings.frontend.dist_path.clone(),
+        );
 
         Self {
             _temp_dir: temp_dir,

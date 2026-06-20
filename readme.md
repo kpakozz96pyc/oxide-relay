@@ -301,20 +301,38 @@ For HTTPS deployments, set `OXIDERELAY_SESSION_COOKIE_SECURE=true`.
 
 # Local Startup
 
-Backend:
+Development backend:
 
 ```bash
 cargo run -p oxiderelay-backend -- --config backend/config.toml.example
 ```
 
-Frontend:
+Development frontend:
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-The Vite dev server proxies `/api` and `/static` to the backend on `127.0.0.1:8081`.
+The Vite dev server proxies `/api` and `/static` to the backend on `127.0.0.1:8080`.
+
+Production-style single-process startup:
+
+```bash
+cd frontend
+npm run build
+cd ..
+
+cargo run -p oxiderelay-backend -- --config backend/config.toml.example
+```
+
+With a built frontend bundle in `./frontend/dist`, the backend serves:
+
+```text
+/      -> frontend SPA
+/api   -> backend API
+/static -> public translation JSON delivery
+```
 
 ---
 
@@ -389,15 +407,23 @@ OxideRelay is designed for simple installation and operation.
 docker run -d \
   --name oxiderelay \
   -p 8080:8080 \
+  -e OXIDERELAY_ADMIN_EMAIL=admin@example.com \
+  -e OXIDERELAY_ADMIN_PASSWORD=change-me \
   -v oxiderelay_data:/data \
   ghcr.io/oxiderelay/oxiderelay:latest
 ```
 
+The container serves both the admin UI at `/` and the API at `/api`.
+
 ## Native Binary
 
 ```bash
+cd frontend && npm run build && cd ..
 ./oxiderelay
 ```
+
+If the frontend bundle is available in `./frontend/dist` or the path configured via
+`OXIDERELAY_FRONTEND_DIST_PATH`, the backend serves it from `/`.
 
 By default, OxideRelay uses an embedded SQLite database.
 

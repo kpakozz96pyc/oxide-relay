@@ -573,6 +573,18 @@ function ProjectPage() {
   const canImportTranslations =
     project.is_owner ||
     (permissionSet.has("ImportTranslations") && canEditCurrentEnvironment);
+  const localeBundleHref =
+    environment && language
+      ? `/api/v1/projects/${encodeURIComponent(projectSlug)}/locales/${encodeURIComponent(language)}?environment=${encodeURIComponent(environment)}`
+      : null;
+  const namespaceJsonLinks =
+    environment && language
+      ? (namespacesQuery.data ?? []).map((item) => ({
+          id: item.id,
+          name: item.name,
+          href: `/static/${encodeURIComponent(projectSlug)}/${encodeURIComponent(environment)}/${encodeURIComponent(language)}/${encodeURIComponent(item.name)}.json`,
+        }))
+      : [];
 
   return (
     <section className="page">
@@ -810,6 +822,35 @@ function ProjectPage() {
           <MetaRow label="Namespaces" value={String(namespacesQuery.data?.length ?? 0)} />
           <MetaRow label="Environments" value={String(environmentsQuery.data?.length ?? 0)} />
           <MetaRow label="Current environment" value={environment || "—"} />
+          <MetaRow label="Current language" value={language || "—"} />
+          <div className="divider" />
+          <div className="stack gap-md">
+            <header className="panel-header">
+              <h2>Delivery links</h2>
+            </header>
+            {localeBundleHref ? (
+              <div className="link-card">
+                <strong>Locale bundle</strong>
+                <a className="project-link" href={localeBundleHref} rel="noreferrer" target="_blank">
+                  {localeBundleHref}
+                </a>
+              </div>
+            ) : (
+              <p className="muted">Select environment and language to view delivery URLs.</p>
+            )}
+            {namespaceJsonLinks.length > 0 ? (
+              <div className="link-list">
+                {namespaceJsonLinks.map((item) => (
+                  <div className="link-card" key={item.id}>
+                    <strong>{item.name}.json</strong>
+                    <a className="project-link" href={item.href} rel="noreferrer" target="_blank">
+                      {item.href}
+                    </a>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <div className="divider" />
           <div className="stack gap-md">
             <header className="panel-header">

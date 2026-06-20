@@ -6,15 +6,21 @@ mod translations;
 
 use axum::{
     Json, Router,
+    body::Body,
     extract::State,
+    http::{Request, StatusCode, header},
+    response::IntoResponse,
     routing::{delete, get, post, put},
 };
 use serde::Serialize;
+use std::path::PathBuf;
+use tower::util::ServiceExt;
+use tower_http::services::{ServeDir, ServeFile};
 
 use crate::{app::AppState, auth};
 
-pub fn router(state: AppState) -> Router {
-    Router::new()
+pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
+    let api_router = Router::new()
         .route("/api/health", get(health))
         .route("/api/openapi.json", get(docs::openapi_json))
         .route("/api/v1/auth/login", post(auth::login))
@@ -100,8 +106,48 @@ pub fn router(state: AppState) -> Router {
             "/static/{project_slug}/{environment_slug}/{language_code}/{*namespace_file}",
             get(delivery::static_namespace_file),
         )
-        .route("/", get(root))
-        .with_state(state)
+        .with_state(state);
+
+    if frontend_dist_path.join("index.html").is_file() {
+        let index_path = frontend_dist_path.join("index.html");
+        let static_service =
+            ServeDir::new(frontend_dist_path).not_found_service(ServeFile::new(index_path.clone()));
+
+        api_router.fallback(move |request: Request<Body>| {
+            let static_service = static_service.clone();
+            let index_path = index_path.clone();
+
+            async move {
+                let wants_html = request
+                    .headers()
+                    .get(header::ACCEPT)
+                    .and_then(|value| value.to_str().ok())
+                    .map(|value| value.contains("text/html"))
+                    .unwrap_or(false);
+
+                let has_extension = request
+                    .uri()
+                    .path()
+                    .rsplit('/')
+                    .next()
+                    .map(|segment| segment.contains('.'))
+                    .unwrap_or(false);
+
+                let response = if wants_html && !has_extension {
+                    ServeFile::new(index_path).oneshot(request).await
+                } else {
+                    static_service.oneshot(request).await
+                };
+
+                match response {
+                    Ok(response) => response.into_response(),
+                    Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
+            }
+        })
+    } else {
+        api_router.route("/", get(root))
+    }
 }
 
 async fn root() -> &'static str {

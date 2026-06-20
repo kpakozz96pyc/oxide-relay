@@ -13,3 +13,6 @@ cookie_secure = "false"
 [bootstrap_admin]
 email = "admin@example.com"
 password = "change-me"
+
+[frontend]
+dist_path = "./frontend/dist"

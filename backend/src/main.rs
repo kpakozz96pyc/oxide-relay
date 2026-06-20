@@ -20,12 +20,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let pool = initialize_database(&settings).await?;
-    let app = http::router(AppState::new(pool, settings.session.clone()));
+    let app = http::router(
+        AppState::new(pool, settings.session.clone()),
+        settings.frontend.dist_path.clone(),
+    );
     let address: SocketAddr = settings.server.socket_addr()?;
     let listener = TcpListener::bind(address).await?;
 
     info!("starting backend on {}", address);
     info!("sqlite database path: {}", settings.database.path.display());
+    info!(
+        frontend_dist_path = %settings.frontend.dist_path.display(),
+        frontend_present = settings.frontend.dist_path.join("index.html").is_file(),
+        "frontend static configuration loaded"
+    );
     info!(
         bootstrap_admin_configured = settings.bootstrap_admin.is_configured(),
         "bootstrap admin configuration loaded"

@@ -53,6 +53,7 @@ docker run \
   -e OXIDERELAY_HOST=0.0.0.0 \
   -e OXIDERELAY_PORT=8080 \
   -e OXIDERELAY_DATABASE_PATH=/data/oxiderelay.sqlite \
+  -e OXIDERELAY_FRONTEND_DIST_PATH=/app/frontend-dist \
   -e OXIDERELAY_ADMIN_EMAIL=admin@example.com \
   -e OXIDERELAY_ADMIN_PASSWORD=change-me \
   -v oxiderelay-data:/data \
@@ -60,6 +61,7 @@ docker run \
 ```
 
 The SQLite file must live on a writable volume such as `/data`.
+The same container serves the frontend at `/` and the backend API at `/api`.
 
 ## Backup and Restore
 

@@ -9,6 +9,7 @@ pub struct Settings {
     pub database: DatabaseSettings,
     pub session: SessionSettings,
     pub bootstrap_admin: BootstrapAdminSettings,
+    pub frontend: FrontendSettings,
 }
 
 impl Settings {
@@ -118,6 +119,17 @@ impl Settings {
                     .and_then(|admin| admin.password.clone())
             });
 
+        let frontend_dist_path = cli
+            .frontend_dist_path
+            .or_else(|| env("OXIDERELAY_FRONTEND_DIST_PATH").map(PathBuf::from))
+            .or_else(|| {
+                file_settings
+                    .frontend
+                    .as_ref()
+                    .and_then(|frontend| frontend.dist_path.clone().map(PathBuf::from))
+            })
+            .unwrap_or_else(|| PathBuf::from("./frontend/dist"));
+
         Ok(Self {
             server: ServerSettings { host, port },
             database: DatabaseSettings {
@@ -131,6 +143,9 @@ impl Settings {
             bootstrap_admin: BootstrapAdminSettings {
                 email: admin_email,
                 password: admin_password,
+            },
+            frontend: FrontendSettings {
+                dist_path: frontend_dist_path,
             },
         })
     }
@@ -172,6 +187,11 @@ impl BootstrapAdminSettings {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct FrontendSettings {
+    pub dist_path: PathBuf,
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "oxiderelay-backend")]
 #[command(about = "OxideRelay backend service")]
@@ -194,6 +214,8 @@ struct Cli {
     admin_email: Option<String>,
     #[arg(long = "admin-password")]
     admin_password: Option<String>,
+    #[arg(long = "frontend-dist-path")]
+    frontend_dist_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -202,6 +224,7 @@ struct ConfigFile {
     database: Option<FileDatabaseSettings>,
     session: Option<FileSessionSettings>,
     bootstrap_admin: Option<FileBootstrapAdminSettings>,
+    frontend: Option<FileFrontendSettings>,
 }
 
 impl ConfigFile {
@@ -239,6 +262,11 @@ struct FileBootstrapAdminSettings {
     password: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct FileFrontendSettings {
+    dist_path: Option<String>,
+}
+
 fn parse_bool_flag(raw: &str) -> Result<bool, Box<dyn std::error::Error>> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
@@ -263,6 +291,7 @@ mod tests {
             session_cookie_secure: None,
             admin_email: None,
             admin_password: None,
+            frontend_dist_path: None,
         }
     }
 
@@ -292,6 +321,9 @@ mod tests {
                 email: Some("file-admin@example.com".to_owned()),
                 password: Some("file-secret".to_owned()),
             }),
+            frontend: Some(FileFrontendSettings {
+                dist_path: Some("./frontend/from-file-dist".to_owned()),
+            }),
         };
         let env = BTreeMap::from([
             ("OXIDERELAY_HOST".to_owned(), "10.0.0.1".to_owned()),
@@ -306,6 +338,10 @@ mod tests {
             (
                 "OXIDERELAY_ADMIN_EMAIL".to_owned(),
                 "env-admin@example.com".to_owned(),
+            ),
+            (
+                "OXIDERELAY_FRONTEND_DIST_PATH".to_owned(),
+                "./frontend/from-env-dist".to_owned(),
             ),
         ]);
 
@@ -329,6 +365,10 @@ mod tests {
             settings.bootstrap_admin.password.as_deref(),
             Some("file-secret")
         );
+        assert_eq!(
+            settings.frontend.dist_path,
+            PathBuf::from("./frontend/from-env-dist")
+        );
     }
 
     #[test]
@@ -346,6 +386,10 @@ mod tests {
         assert_eq!(settings.session.ttl_hours, 168);
         assert!(!settings.session.cookie_secure);
         assert!(!settings.bootstrap_admin.is_configured());
+        assert_eq!(
+            settings.frontend.dist_path,
+            PathBuf::from("./frontend/dist")
+        );
     }
 
     #[test]

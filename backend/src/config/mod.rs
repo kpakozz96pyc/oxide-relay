@@ -1,5 +1,6 @@
 mod settings;
 
 pub use settings::{
-    BootstrapAdminSettings, DatabaseSettings, ServerSettings, SessionSettings, Settings,
+    BootstrapAdminSettings, DatabaseSettings, FrontendSettings, ServerSettings, SessionSettings,
+    Settings,
 };

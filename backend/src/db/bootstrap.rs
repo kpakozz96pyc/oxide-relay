@@ -1,10 +1,4 @@
-use argon2::{
-    Argon2,
-    password_hash::{PasswordHasher, SaltString},
-};
-use rand_core::OsRng;
 use sqlx::{Row, SqlitePool};
-use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 use crate::config::Settings;
@@ -64,8 +58,8 @@ async fn bootstrap_initial_admin(
         .as_deref()
         .ok_or("missing OXIDERELAY_ADMIN_PASSWORD for initial bootstrap")?;
 
-    let password_hash = hash_password(password)?;
-    let timestamp = now_utc()?;
+    let password_hash = crate::util::hash_password(password).map_err(|e| format!("{:?}", e))?;
+    let timestamp = crate::util::now_utc().map_err(|e| format!("{:?}", e))?;
     let user_id = Uuid::new_v4().to_string();
 
     let mut transaction = pool.begin().await?;
@@ -109,19 +103,7 @@ async fn bootstrap_initial_admin(
     Ok(())
 }
 
-fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let salt = SaltString::generate(&mut OsRng);
-    let hash = Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map_err(|error| std::io::Error::other(format!("failed to hash password: {error}")))?
-        .to_string();
 
-    Ok(hash)
-}
-
-fn now_utc() -> Result<String, Box<dyn std::error::Error>> {
-    Ok(time::OffsetDateTime::now_utc().format(&Rfc3339)?)
-}
 
 fn permissions_catalog() -> &'static [(&'static str, &'static str)] {
     &[

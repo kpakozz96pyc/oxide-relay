@@ -1,26 +1,21 @@
-use std::collections::BTreeMap;
-
-use argon2::{
-    Argon2,
-    password_hash::{PasswordHasher, SaltString},
-};
 use axum::{
     Json,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
 };
-use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, Row};
-use time::format_description::well_known::Rfc3339;
 use utoipa::ToSchema;
-use uuid::Uuid;
 
 use crate::{
     app::AppState,
-    auth,
+    auth::{self, AuthenticatedUser},
     errors::{ApiError, AppResult},
+    repository::{members, permissions, users},
 };
+
+// ---------------------------------------------------------------------------
+// Users
+// ---------------------------------------------------------------------------
 
 #[utoipa::path(
     get,
@@ -29,23 +24,11 @@ use crate::{
 )]
 pub async fn list_users(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    user: AuthenticatedUser,
 ) -> AppResult<Json<Vec<UserResponse>>> {
-    let user = auth::authenticated_user(&state, &headers).await?;
     auth::require_permission(&state, &user.id, "ManageUsers").await?;
-
-    let users = sqlx::query_as::<_, UserResponse>(
-        r#"
-        SELECT id, email, display_name, is_active, created_at, updated_at
-        FROM users
-        ORDER BY email
-        "#,
-    )
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "Unable to list users."))?;
-
-    Ok(Json(users))
+    let records = users::list(&state.pool).await?;
+    Ok(Json(records.into_iter().map(UserResponse::from).collect()))
 }
 
 #[utoipa::path(
@@ -56,41 +39,24 @@ pub async fn list_users(
 )]
 pub async fn create_user(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    user: AuthenticatedUser,
     Json(payload): Json<CreateUserRequest>,
 ) -> AppResult<(StatusCode, Json<UserResponse>)> {
-    let actor = auth::authenticated_user(&state, &headers).await?;
-    auth::require_permission(&state, &actor.id, "ManageUsers").await?;
+    auth::require_permission(&state, &user.id, "ManageUsers").await?;
     validate_create_user(&payload)?;
 
-    let now = now_utc()?;
-    let item = UserResponse {
-        id: Uuid::new_v4().to_string(),
-        email: payload.email.trim().to_lowercase(),
-        display_name: payload.display_name.trim().to_owned(),
-        is_active: payload.is_active.unwrap_or(true),
-        created_at: now.clone(),
-        updated_at: now.clone(),
-    };
-
-    sqlx::query(
-        r#"
-        INSERT INTO users (id, email, password_hash, display_name, is_active, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-        "#,
+    let record = users::create(
+        &state.pool,
+        users::CreateUserInput {
+            email: &payload.email,
+            password: &payload.password,
+            display_name: &payload.display_name,
+            is_active: payload.is_active.unwrap_or(true),
+        },
     )
-    .bind(&item.id)
-    .bind(&item.email)
-    .bind(hash_password(payload.password.trim())?)
-    .bind(&item.display_name)
-    .bind(if item.is_active { 1 } else { 0 })
-    .bind(&item.created_at)
-    .bind(&item.updated_at)
-    .execute(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "User email already exists."))?;
+    .await?;
 
-    Ok((StatusCode::CREATED, Json(item)))
+    Ok((StatusCode::CREATED, Json(UserResponse::from(record))))
 }
 
 #[utoipa::path(
@@ -102,66 +68,26 @@ pub async fn create_user(
 )]
 pub async fn update_user(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    actor: AuthenticatedUser,
     Path(user_id): Path<String>,
     Json(payload): Json<UpdateUserRequest>,
 ) -> AppResult<Json<UserResponse>> {
-    let actor = auth::authenticated_user(&state, &headers).await?;
     auth::require_permission(&state, &actor.id, "ManageUsers").await?;
-
-    let existing = find_user(&state, &user_id).await?;
     validate_update_user(&payload)?;
 
-    let email = payload
-        .email
-        .as_deref()
-        .map(|value| value.trim().to_lowercase())
-        .unwrap_or(existing.email.clone());
-    let display_name = payload
-        .display_name
-        .as_deref()
-        .map(|value| value.trim().to_owned())
-        .unwrap_or(existing.display_name.clone());
-    let is_active = payload.is_active.unwrap_or(existing.is_active);
-    let updated_at = now_utc()?;
-
-    sqlx::query(
-        r#"
-        UPDATE users
-        SET email = ?1,
-            password_hash = COALESCE(?2, password_hash),
-            display_name = ?3,
-            is_active = ?4,
-            updated_at = ?5
-        WHERE id = ?6
-        "#,
+    let record = users::update(
+        &state.pool,
+        &user_id,
+        users::UpdateUserInput {
+            email: payload.email.as_deref(),
+            password: payload.password.as_deref(),
+            display_name: payload.display_name.as_deref(),
+            is_active: payload.is_active,
+        },
     )
-    .bind(&email)
-    .bind(
-        payload
-            .password
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(hash_password)
-            .transpose()?,
-    )
-    .bind(&display_name)
-    .bind(if is_active { 1 } else { 0 })
-    .bind(&updated_at)
-    .bind(&user_id)
-    .execute(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "User email already exists."))?;
+    .await?;
 
-    Ok(Json(UserResponse {
-        id: existing.id,
-        email,
-        display_name,
-        is_active,
-        created_at: existing.created_at,
-        updated_at,
-    }))
+    Ok(Json(UserResponse::from(record)))
 }
 
 #[utoipa::path(
@@ -172,24 +98,17 @@ pub async fn update_user(
 )]
 pub async fn delete_user(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    actor: AuthenticatedUser,
     Path(user_id): Path<String>,
 ) -> AppResult<StatusCode> {
-    let actor = auth::authenticated_user(&state, &headers).await?;
     auth::require_permission(&state, &actor.id, "ManageUsers").await?;
-
-    let result = sqlx::query("DELETE FROM users WHERE id = ?1")
-        .bind(user_id)
-        .execute(&state.pool)
-        .await
-        .map_err(|error| ApiError::from_sqlx(error, "Unable to delete the user."))?;
-
-    if result.rows_affected() == 0 {
-        return Err(ApiError::not_found("User was not found."));
-    }
-
+    users::delete(&state.pool, &user_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+// ---------------------------------------------------------------------------
+// Permissions
+// ---------------------------------------------------------------------------
 
 #[utoipa::path(
     get,
@@ -198,23 +117,11 @@ pub async fn delete_user(
 )]
 pub async fn list_permissions(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    actor: AuthenticatedUser,
 ) -> AppResult<Json<Vec<PermissionResponse>>> {
-    let actor = auth::authenticated_user(&state, &headers).await?;
     auth::require_permission(&state, &actor.id, "ManagePermissions").await?;
-
-    let items = sqlx::query_as::<_, PermissionResponse>(
-        r#"
-        SELECT id, code, description
-        FROM permissions
-        ORDER BY code
-        "#,
-    )
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "Unable to list permissions."))?;
-
-    Ok(Json(items))
+    let records = permissions::list(&state.pool).await?;
+    Ok(Json(records.into_iter().map(PermissionResponse::from).collect()))
 }
 
 #[utoipa::path(
@@ -225,27 +132,12 @@ pub async fn list_permissions(
 )]
 pub async fn get_user_permissions(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    actor: AuthenticatedUser,
     Path(user_id): Path<String>,
 ) -> AppResult<Json<Vec<PermissionResponse>>> {
-    let actor = auth::authenticated_user(&state, &headers).await?;
     auth::require_permission(&state, &actor.id, "ManagePermissions").await?;
-
-    let permissions = sqlx::query_as::<_, PermissionResponse>(
-        r#"
-        SELECT p.id, p.code, p.description
-        FROM user_permissions up
-        JOIN permissions p ON p.id = up.permission_id
-        WHERE up.user_id = ?1
-        ORDER BY p.code
-        "#,
-    )
-    .bind(user_id)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "Unable to load user permissions."))?;
-
-    Ok(Json(permissions))
+    let records = permissions::list_for_user(&state.pool, &user_id).await?;
+    Ok(Json(records.into_iter().map(PermissionResponse::from).collect()))
 }
 
 #[utoipa::path(
@@ -257,47 +149,18 @@ pub async fn get_user_permissions(
 )]
 pub async fn replace_user_permissions(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    actor: AuthenticatedUser,
     Path(user_id): Path<String>,
     Json(payload): Json<ReplaceUserPermissionsRequest>,
 ) -> AppResult<StatusCode> {
-    let actor = auth::authenticated_user(&state, &headers).await?;
     auth::require_permission(&state, &actor.id, "ManagePermissions").await?;
-
-    let permission_ids = resolve_permission_ids(&state, &payload.permission_codes).await?;
-
-    let mut tx = state
-        .pool
-        .begin()
-        .await
-        .map_err(|error| ApiError::from_sqlx(error, "Unable to start permission update."))?;
-
-    sqlx::query("DELETE FROM user_permissions WHERE user_id = ?1")
-        .bind(&user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| ApiError::from_sqlx(error, "Unable to clear user permissions."))?;
-
-    for permission_id in permission_ids {
-        sqlx::query(
-            r#"
-            INSERT INTO user_permissions (user_id, permission_id)
-            VALUES (?1, ?2)
-            "#,
-        )
-        .bind(&user_id)
-        .bind(permission_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| ApiError::from_sqlx(error, "Unable to assign user permissions."))?;
-    }
-
-    tx.commit()
-        .await
-        .map_err(|error| ApiError::from_sqlx(error, "Unable to commit permission update."))?;
-
+    permissions::replace_for_user(&state.pool, &user_id, &payload.permission_codes).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+// ---------------------------------------------------------------------------
+// Project members
+// ---------------------------------------------------------------------------
 
 #[utoipa::path(
     get,
@@ -307,35 +170,13 @@ pub async fn replace_user_permissions(
 )]
 pub async fn list_project_members(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    actor: AuthenticatedUser,
     Path(project_slug): Path<String>,
 ) -> AppResult<Json<Vec<ProjectMemberResponse>>> {
-    let actor = auth::authenticated_user(&state, &headers).await?;
     let project =
         auth::authorize_project(&state, &actor, &project_slug, "ManageProjectMembers").await?;
-
-    let members = sqlx::query_as::<_, ProjectMemberResponse>(
-        r#"
-        SELECT
-            u.id,
-            u.email,
-            u.display_name,
-            u.is_active,
-            CASE WHEN p.owner_user_id = u.id THEN 1 ELSE 0 END AS is_owner,
-            upa.created_at AS added_at
-        FROM user_project_access upa
-        JOIN users u ON u.id = upa.user_id
-        JOIN projects p ON p.id = upa.project_id
-        WHERE upa.project_id = ?1
-        ORDER BY is_owner DESC, u.email
-        "#,
-    )
-    .bind(&project.id)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "Unable to list project members."))?;
-
-    Ok(Json(members))
+    let records = members::list(&state.pool, &project.id).await?;
+    Ok(Json(records.into_iter().map(ProjectMemberResponse::from).collect()))
 }
 
 #[utoipa::path(
@@ -347,11 +188,10 @@ pub async fn list_project_members(
 )]
 pub async fn add_project_member(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    actor: AuthenticatedUser,
     Path(project_slug): Path<String>,
     Json(payload): Json<AddProjectMemberRequest>,
 ) -> AppResult<(StatusCode, Json<ProjectMemberResponse>)> {
-    let actor = auth::authenticated_user(&state, &headers).await?;
     let project =
         auth::authorize_project(&state, &actor, &project_slug, "ManageProjectMembers").await?;
 
@@ -360,44 +200,8 @@ pub async fn add_project_member(
         return Err(ApiError::validation("User ID is required."));
     }
 
-    let added_at = now_utc()?;
-    sqlx::query(
-        r#"
-        INSERT INTO user_project_access (user_id, project_id, created_at)
-        VALUES (?1, ?2, ?3)
-        "#,
-    )
-    .bind(user_id)
-    .bind(&project.id)
-    .bind(&added_at)
-    .execute(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "Project member already exists."))?;
-
-    let item = sqlx::query_as::<_, ProjectMemberResponse>(
-        r#"
-        SELECT
-            u.id,
-            u.email,
-            u.display_name,
-            u.is_active,
-            CASE WHEN p.owner_user_id = u.id THEN 1 ELSE 0 END AS is_owner,
-            upa.created_at AS added_at
-        FROM user_project_access upa
-        JOIN users u ON u.id = upa.user_id
-        JOIN projects p ON p.id = upa.project_id
-        WHERE upa.project_id = ?1
-          AND upa.user_id = ?2
-        "#,
-    )
-    .bind(&project.id)
-    .bind(user_id)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "Unable to load the project member."))?
-    .ok_or_else(|| ApiError::not_found("User was not found."))?;
-
-    Ok((StatusCode::CREATED, Json(item)))
+    let record = members::add(&state.pool, &project.id, user_id).await?;
+    Ok((StatusCode::CREATED, Json(ProjectMemberResponse::from(record))))
 }
 
 #[utoipa::path(
@@ -411,10 +215,9 @@ pub async fn add_project_member(
 )]
 pub async fn delete_project_member(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    actor: AuthenticatedUser,
     Path((project_slug, user_id)): Path<(String, String)>,
 ) -> AppResult<StatusCode> {
-    let actor = auth::authenticated_user(&state, &headers).await?;
     let project =
         auth::authorize_project(&state, &actor, &project_slug, "ManageProjectMembers").await?;
 
@@ -424,82 +227,13 @@ pub async fn delete_project_member(
         ));
     }
 
-    let result = sqlx::query(
-        r#"
-        DELETE FROM user_project_access
-        WHERE project_id = ?1 AND user_id = ?2
-        "#,
-    )
-    .bind(&project.id)
-    .bind(user_id)
-    .execute(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "Unable to delete the project member."))?;
-
-    if result.rows_affected() == 0 {
-        return Err(ApiError::not_found("Project member was not found."));
-    }
-
+    members::remove(&state.pool, &project.id, &user_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn find_user(state: &AppState, user_id: &str) -> AppResult<UserResponse> {
-    sqlx::query_as::<_, UserResponse>(
-        r#"
-        SELECT id, email, display_name, is_active, created_at, updated_at
-        FROM users
-        WHERE id = ?1
-        "#,
-    )
-    .bind(user_id)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "Unable to load the user."))?
-    .ok_or_else(|| ApiError::not_found("User was not found."))
-}
-
-async fn resolve_permission_ids(
-    state: &AppState,
-    permission_codes: &[String],
-) -> AppResult<Vec<String>> {
-    let normalized: Vec<String> = permission_codes
-        .iter()
-        .map(|code| code.trim().to_owned())
-        .filter(|code| !code.is_empty())
-        .collect();
-
-    let permissions = sqlx::query(
-        r#"
-        SELECT id, code
-        FROM permissions
-        WHERE code IN (SELECT value FROM json_each(?1))
-        "#,
-    )
-    .bind(serde_json::to_string(&normalized).map_err(|error| {
-        ApiError::internal(format!("Unable to encode permission codes: {error}"))
-    })?)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "Unable to resolve permissions."))?;
-
-    let mut found = BTreeMap::new();
-    for row in permissions {
-        let id: String = row.get("id");
-        let code: String = row.get("code");
-        found.insert(code, id);
-    }
-
-    if found.len() != normalized.len() {
-        return Err(ApiError::validation(
-            "One or more permission codes are not part of the seeded permission catalog.",
-        ));
-    }
-
-    Ok(normalized
-        .into_iter()
-        .filter_map(|code| found.get(&code).cloned())
-        .collect())
-}
+// ---------------------------------------------------------------------------
+// Validation helpers
+// ---------------------------------------------------------------------------
 
 fn validate_create_user(payload: &CreateUserRequest) -> AppResult<()> {
     if payload.email.trim().is_empty()
@@ -532,19 +266,9 @@ fn validate_update_user(payload: &UpdateUserRequest) -> AppResult<()> {
     Ok(())
 }
 
-fn hash_password(password: &str) -> AppResult<String> {
-    let salt = SaltString::generate(&mut OsRng);
-    Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map_err(|error| ApiError::internal(format!("Unable to hash password: {error}")))
-        .map(|hash| hash.to_string())
-}
-
-fn now_utc() -> AppResult<String> {
-    time::OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .map_err(|error| ApiError::internal(format!("Unable to format current time: {error}")))
-}
+// ---------------------------------------------------------------------------
+// Request / Response types
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateUserRequest {
@@ -562,7 +286,7 @@ pub struct UpdateUserRequest {
     pub is_active: Option<bool>,
 }
 
-#[derive(Debug, Serialize, FromRow, ToSchema)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UserResponse {
     pub id: String,
     pub email: String,
@@ -572,11 +296,34 @@ pub struct UserResponse {
     pub updated_at: String,
 }
 
-#[derive(Debug, Serialize, FromRow, ToSchema)]
+impl From<users::UserRecord> for UserResponse {
+    fn from(r: users::UserRecord) -> Self {
+        Self {
+            id: r.id,
+            email: r.email,
+            display_name: r.display_name,
+            is_active: r.is_active,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PermissionResponse {
     pub id: String,
     pub code: String,
     pub description: Option<String>,
+}
+
+impl From<permissions::PermissionRecord> for PermissionResponse {
+    fn from(r: permissions::PermissionRecord) -> Self {
+        Self {
+            id: r.id,
+            code: r.code,
+            description: r.description,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -589,7 +336,7 @@ pub struct AddProjectMemberRequest {
     pub user_id: String,
 }
 
-#[derive(Debug, Serialize, FromRow, ToSchema)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProjectMemberResponse {
     pub id: String,
     pub email: String,
@@ -597,4 +344,17 @@ pub struct ProjectMemberResponse {
     pub is_active: bool,
     pub is_owner: bool,
     pub added_at: String,
+}
+
+impl From<members::MemberRecord> for ProjectMemberResponse {
+    fn from(r: members::MemberRecord) -> Self {
+        Self {
+            id: r.id,
+            email: r.email,
+            display_name: r.display_name,
+            is_active: r.is_active,
+            is_owner: r.is_owner,
+            added_at: r.added_at,
+        }
+    }
 }

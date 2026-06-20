@@ -13,6 +13,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::{
     app::AppState,
     errors::{ApiError, AppResult},
+    util::required_non_empty,
 };
 
 #[utoipa::path(
@@ -143,13 +144,7 @@ fn namespace_from_path(namespace_file: &str) -> AppResult<&str> {
     Ok(namespace)
 }
 
-fn required_non_empty<'a>(value: &'a str, message: &'static str) -> AppResult<&'a str> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(ApiError::validation(message));
-    }
-    Ok(trimmed)
-}
+
 
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
 pub struct LocaleBundleQuery {

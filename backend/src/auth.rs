@@ -4,15 +4,16 @@ use argon2::{
 };
 use axum::{
     Json,
-    extract::State,
+    extract::{FromRequestParts, State},
     http::{
         HeaderMap, HeaderValue, StatusCode,
         header::{COOKIE, SET_COOKIE},
+        request::Parts,
     },
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, query_scalar};
+use sqlx::FromRow;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -20,7 +21,13 @@ use uuid::Uuid;
 use crate::{
     app::AppState,
     errors::{ApiError, AppResult},
+    repository::{permissions, sessions},
+    util,
 };
+
+// ---------------------------------------------------------------------------
+// Login / logout / me handlers
+// ---------------------------------------------------------------------------
 
 #[utoipa::path(
     post,
@@ -61,28 +68,15 @@ pub async fn login(
     verify_password(&payload.password, &user.password_hash)?;
 
     let session_id = Uuid::new_v4().to_string();
-    let created_at = now_utc()?;
-    let expires_at = future_utc(state.session_ttl_hours)?;
+    let expires_at = future_utc(state.session.ttl_hours)?;
 
-    sqlx::query(
-        r#"
-        INSERT INTO sessions (id, user_id, expires_at, created_at)
-        VALUES (?1, ?2, ?3, ?4)
-        "#,
-    )
-    .bind(&session_id)
-    .bind(&user.id)
-    .bind(&expires_at)
-    .bind(&created_at)
-    .execute(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "Unable to create a session."))?;
+    sessions::create_session(&state.pool, &user.id, &session_id, &expires_at).await?;
 
     let cookie = build_session_cookie(
-        &state.session_cookie_name,
+        &state.session.cookie_name,
         &session_id,
-        state.session_ttl_hours,
-        state.session_cookie_secure,
+        state.session.ttl_hours,
+        state.session.cookie_secure,
     )?;
 
     let mut response = Json(AuthResponse {
@@ -111,18 +105,14 @@ pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> AppResult<impl IntoResponse> {
-    if let Some(session_id) = read_session_cookie(&headers, &state.session_cookie_name) {
-        sqlx::query("DELETE FROM sessions WHERE id = ?1")
-            .bind(session_id)
-            .execute(&state.pool)
-            .await
-            .map_err(|error| ApiError::from_sqlx(error, "Unable to clear the session."))?;
+    if let Some(session_id) = read_session_cookie(&headers, &state.session.cookie_name) {
+        sessions::delete_session(&state.pool, &session_id).await?;
     }
 
     let mut response = StatusCode::NO_CONTENT.into_response();
     response.headers_mut().insert(
         SET_COOKIE,
-        clear_session_cookie(&state.session_cookie_name, state.session_cookie_secure)?,
+        clear_session_cookie(&state.session.cookie_name, state.session.cookie_secure)?,
     );
 
     Ok(response)
@@ -136,8 +126,7 @@ pub async fn logout(
         (status = 401, body = crate::errors::ErrorResponse)
     )
 )]
-pub async fn me(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Json<MeResponse>> {
-    let user = authenticated_user(&state, &headers).await?;
+pub async fn me(user: AuthenticatedUser) -> AppResult<Json<MeResponse>> {
     Ok(Json(MeResponse { user }))
 }
 
@@ -151,77 +140,62 @@ pub async fn me(State(state): State<AppState>, headers: HeaderMap) -> AppResult<
 )]
 pub async fn me_permissions(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    user: AuthenticatedUser,
 ) -> AppResult<Json<MePermissionsResponse>> {
-    let user = authenticated_user(&state, &headers).await?;
-    let permissions = sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT p.code
-        FROM user_permissions up
-        JOIN permissions p ON p.id = up.permission_id
-        WHERE up.user_id = ?1
-        ORDER BY p.code
-        "#,
-    )
-    .bind(&user.id)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|error| {
-        ApiError::from_sqlx(error, "Unable to load the current user's permissions.")
-    })?;
-
-    Ok(Json(MePermissionsResponse { permissions }))
+    let permission_codes = permissions::list_codes_for_user(&state.pool, &user.id).await?;
+    Ok(Json(MePermissionsResponse {
+        permissions: permission_codes,
+    }))
 }
 
-pub async fn authenticated_user(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> AppResult<AuthenticatedUser> {
-    let session_id = read_session_cookie(headers, &state.session_cookie_name)
+// ---------------------------------------------------------------------------
+// Axum extractor: AuthenticatedUser
+// ---------------------------------------------------------------------------
+
+impl FromRequestParts<AppState> for AuthenticatedUser {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let session_id = read_session_cookie(&parts.headers, &state.session.cookie_name)
+            .ok_or_else(|| ApiError::unauthorized("Authentication is required."))?;
+        let now = util::now_utc()?;
+
+        let user = sqlx::query_as::<_, AuthenticatedUser>(
+            r#"
+            SELECT u.id, u.email, u.display_name
+            FROM sessions s
+            JOIN users u ON u.id = s.user_id
+            WHERE s.id = ?1
+              AND s.expires_at > ?2
+              AND u.is_active = 1
+            "#,
+        )
+        .bind(&session_id)
+        .bind(now)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|error| ApiError::from_sqlx(error, "Unable to load the current user."))?
         .ok_or_else(|| ApiError::unauthorized("Authentication is required."))?;
-    let now = now_utc()?;
 
-    let user = sqlx::query_as::<_, AuthenticatedUser>(
-        r#"
-        SELECT u.id, u.email, u.display_name
-        FROM sessions s
-        JOIN users u ON u.id = s.user_id
-        WHERE s.id = ?1
-          AND s.expires_at > ?2
-          AND u.is_active = 1
-        "#,
-    )
-    .bind(&session_id)
-    .bind(now)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "Unable to load the current user."))?
-    .ok_or_else(|| ApiError::unauthorized("Authentication is required."))?;
-
-    Ok(user)
+        Ok(user)
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Authorization helpers (kept public for use in HTTP handlers)
+// ---------------------------------------------------------------------------
 
 pub async fn require_permission(
     state: &AppState,
     user_id: &str,
     permission_code: &str,
 ) -> AppResult<()> {
-    let count: i64 = query_scalar(
-        r#"
-        SELECT COUNT(*)
-        FROM user_permissions up
-        JOIN permissions p ON p.id = up.permission_id
-        WHERE up.user_id = ?1
-          AND p.code = ?2
-        "#,
-    )
-    .bind(user_id)
-    .bind(permission_code)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|error| ApiError::from_sqlx(error, "Unable to resolve permissions."))?;
+    let has = permissions::user_has_permission(&state.pool, user_id, permission_code).await?;
 
-    if count == 0 {
+    if !has {
         return Err(ApiError::permission_denied(format!(
             "Missing required permission: {permission_code}."
         )));
@@ -295,6 +269,10 @@ pub async fn require_environment_permission(
     require_permission(state, &user.id, permission_code).await
 }
 
+// ---------------------------------------------------------------------------
+// Cookie helpers
+// ---------------------------------------------------------------------------
+
 fn read_session_cookie(headers: &HeaderMap, cookie_name: &str) -> Option<String> {
     headers.get(COOKIE).and_then(|header| {
         header.to_str().ok().and_then(|value| {
@@ -348,17 +326,37 @@ fn clear_session_cookie(cookie_name: &str, cookie_secure: bool) -> AppResult<Hea
     .map_err(|_| ApiError::internal("Unable to clear the session cookie."))
 }
 
-fn now_utc() -> AppResult<String> {
-    OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .map_err(|error| ApiError::internal(format!("Unable to format current time: {error}")))
-}
-
 fn future_utc(ttl_hours: i64) -> AppResult<String> {
     (OffsetDateTime::now_utc() + Duration::hours(ttl_hours))
         .format(&Rfc3339)
         .map_err(|error| ApiError::internal(format!("Unable to format expiration time: {error}")))
 }
+
+// ---------------------------------------------------------------------------
+// Permission code helpers for environments
+// ---------------------------------------------------------------------------
+
+fn read_environment_permission_code(environment_slug: &str) -> Option<&'static str> {
+    match environment_slug {
+        "development" => Some("ReadDevelopment"),
+        "staging" => Some("ReadStaging"),
+        "production" => Some("ReadProduction"),
+        _ => None,
+    }
+}
+
+fn edit_environment_permission_code(environment_slug: &str) -> Option<&'static str> {
+    match environment_slug {
+        "development" => Some("EditDevelopment"),
+        "staging" => Some("EditStaging"),
+        "production" => Some("EditProduction"),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct LoginRequest {
@@ -403,24 +401,6 @@ pub enum EnvironmentAccessKind {
     Edit,
 }
 
-fn read_environment_permission_code(environment_slug: &str) -> Option<&'static str> {
-    match environment_slug {
-        "development" => Some("ReadDevelopment"),
-        "staging" => Some("ReadStaging"),
-        "production" => Some("ReadProduction"),
-        _ => None,
-    }
-}
-
-fn edit_environment_permission_code(environment_slug: &str) -> Option<&'static str> {
-    match environment_slug {
-        "development" => Some("EditDevelopment"),
-        "staging" => Some("EditStaging"),
-        "production" => Some("EditProduction"),
-        _ => None,
-    }
-}
-
 #[derive(Debug, Clone, FromRow)]
 pub struct AuthorizedProject {
     pub id: String,
@@ -433,6 +413,10 @@ pub struct AuthorizedProject {
     pub is_owner: bool,
     pub has_access: bool,
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

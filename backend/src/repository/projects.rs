@@ -166,6 +166,23 @@ pub async fn create(pool: &SqlitePool, input: CreateProjectInput<'_>) -> AppResu
     .await
     .map_err(|e| ApiError::from_sqlx(e, "Unable to create the default namespace."))?;
 
+    // Default language
+    sqlx::query(
+        r#"
+        INSERT INTO languages (id, project_id, code, name, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&id)
+    .bind("en")
+    .bind("English")
+    .bind(&now)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to create the default language."))?;
+
     tx.commit()
         .await
         .map_err(|e| ApiError::from_sqlx(e, "Unable to commit project creation."))?;

@@ -371,6 +371,87 @@ async fn admin_user_permissions_and_project_members_endpoints_work() {
 }
 
 #[tokio::test]
+async fn creating_project_bootstraps_default_language_namespace_and_environments() {
+    let harness = TestHarness::new().await;
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+
+    let create_project = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "name": "Bootstrap Project",
+                        "slug": "bootstrap-project",
+                        "description": "Project with defaults"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(create_project.status(), StatusCode::CREATED);
+
+    let languages = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/bootstrap-project/languages")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(languages.status(), StatusCode::OK);
+    let languages_body = json_body(languages).await;
+    let languages = languages_body.as_array().expect("languages array");
+    assert_eq!(languages.len(), 1);
+    assert_eq!(languages[0]["code"], "en");
+    assert_eq!(languages[0]["name"], "English");
+
+    let namespaces = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/bootstrap-project/namespaces")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(namespaces.status(), StatusCode::OK);
+    let namespaces_body = json_body(namespaces).await;
+    let namespaces = namespaces_body.as_array().expect("namespaces array");
+    assert_eq!(namespaces.len(), 1);
+    assert_eq!(namespaces[0]["name"], "common");
+
+    let environments = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/bootstrap-project/environments")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(environments.status(), StatusCode::OK);
+    let environments_body = json_body(environments).await;
+    let environments = environments_body.as_array().expect("environments array");
+    assert_eq!(environments.len(), 3);
+    assert_eq!(environments[0]["name"], "Development");
+    assert_eq!(environments[0]["slug"], "development");
+    assert_eq!(environments[1]["name"], "Production");
+    assert_eq!(environments[1]["slug"], "production");
+    assert_eq!(environments[2]["name"], "Staging");
+    assert_eq!(environments[2]["slug"], "staging");
+}
+
+#[tokio::test]
 async fn translation_crud_import_export_and_environment_acl_work() {
     let harness = TestHarness::new().await;
     let owner_id = harness

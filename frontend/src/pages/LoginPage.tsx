@@ -40,8 +40,7 @@ export function LoginPage() {
         <div className="login-hero-content">
           <p className="eyebrow">OxideRelay</p>
           <h1 className="login-hero-title">
-            Manage your&nbsp;
-            <span>translations</span>
+            Manage your translations
             <br />
             at&nbsp;scale.
           </h1>
@@ -94,12 +93,12 @@ export function LoginPage() {
               width: 44,
               height: 44,
               borderRadius: "var(--radius-md)",
-              background: "var(--color-accent-subtle)",
-              border: "1px solid var(--color-accent-border)",
+              background: "var(--surface-raised)",
+              border: "1px solid var(--border-strong)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: "var(--color-accent)",
+              color: "var(--white)",
             }}
           >
             <Lock size={20} />

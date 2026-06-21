@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   apiGet,
@@ -22,6 +22,7 @@ import { MetaRow } from "../components/MetaRow";
 
 export function ProjectPage() {
   const { projectSlug = "" } = useParams();
+  const navigate = useNavigate();
   const [environment, setEnvironment] = useState("");
   const [language, setLanguage] = useState("");
   const [namespace, setNamespace] = useState("");
@@ -47,6 +48,10 @@ export function ProjectPage() {
   const [newNamespaceName, setNewNamespaceName] = useState("");
   const [newEnvironmentName, setNewEnvironmentName] = useState("");
   const [newEnvironmentSlug, setNewEnvironmentSlug] = useState("");
+  const [isEditingProject, setIsEditingProject] = useState(false);
+  const [editProjectName, setEditProjectName] = useState("");
+  const [editProjectSlug, setEditProjectSlug] = useState("");
+  const [editProjectDescription, setEditProjectDescription] = useState("");
   const queryClient = useQueryClient();
   const permissionSet = usePermissionSet();
 
@@ -162,6 +167,33 @@ export function ProjectPage() {
     },
   });
 
+  const updateProjectMutation = useMutation({
+    mutationFn: async () =>
+      apiPut(`/api/v1/projects/${projectSlug}`, {
+        name: editProjectName,
+        slug: editProjectSlug,
+        description: editProjectDescription || null,
+      }),
+    onSuccess: async (data: Project) => {
+      setIsEditingProject(false);
+      if (data.slug !== projectSlug) {
+        queryClient.setQueryData(["project", data.slug], data);
+        queryClient.removeQueries({ queryKey: ["project", projectSlug] });
+        navigate(`/projects/${data.slug}`, { replace: true });
+      } else {
+        await queryClient.invalidateQueries({ queryKey: ["project", projectSlug] });
+      }
+    },
+  });
+
+  const deleteProjectMutation = useMutation({
+    mutationFn: async () => apiDelete(`/api/v1/projects/${projectSlug}`),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      navigate("/projects", { replace: true });
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (translationId: string) =>
       apiDelete(`/api/v1/projects/${projectSlug}/translations/${translationId}`),
@@ -263,6 +295,7 @@ export function ProjectPage() {
   }
 
   const canEditProject = project.is_owner || permissionSet.has("EditProjects");
+  const canDeleteProject = project.is_owner || permissionSet.has("DeleteProjects");
   const canManageMembers = project.is_owner || permissionSet.has("ManageProjectMembers");
   const canReadCurrentEnvironment = project.is_owner || permissionSet.has(readEnvironmentPermission(environment));
   const canEditCurrentEnvironment = project.is_owner || permissionSet.has(editEnvironmentPermission(environment));
@@ -703,6 +736,84 @@ export function ProjectPage() {
                 ) : null}
               </div>
             ))}
+          </div>
+
+          <div className="divider" />
+          <div className="stack gap-md">
+            <header className="panel-header">
+              <h2>Project settings</h2>
+            </header>
+            {updateProjectMutation.isError ? (
+              <div className="banner error">{buildErrorMessage(updateProjectMutation.error)}</div>
+            ) : null}
+            {deleteProjectMutation.isError ? (
+              <div className="banner error">{buildErrorMessage(deleteProjectMutation.error)}</div>
+            ) : null}
+            
+            {isEditingProject ? (
+              <div className="stack gap-md">
+                <div className="form-grid">
+                  <label className="field">
+                    <span>Name</span>
+                    <input value={editProjectName} onChange={(e) => setEditProjectName(e.target.value)} />
+                  </label>
+                  <label className="field">
+                    <span>Slug</span>
+                    <input value={editProjectSlug} onChange={(e) => setEditProjectSlug(e.target.value)} />
+                  </label>
+                </div>
+                <label className="field">
+                  <span>Description</span>
+                  <textarea
+                    className="textarea"
+                    rows={3}
+                    value={editProjectDescription}
+                    onChange={(e) => setEditProjectDescription(e.target.value)}
+                  />
+                </label>
+                <div className="action-row">
+                  <button
+                    className="button primary"
+                    disabled={updateProjectMutation.isPending}
+                    onClick={() => updateProjectMutation.mutate()}
+                  >
+                    Save changes
+                  </button>
+                  <button className="button ghost" onClick={() => setIsEditingProject(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="stack gap-sm">
+                <p className="muted">Modify project details or permanently delete this project.</p>
+                <div className="action-row">
+                  <button
+                    className="button secondary"
+                    disabled={!canEditProject}
+                    onClick={() => {
+                      setEditProjectName(project.name);
+                      setEditProjectSlug(project.slug);
+                      setEditProjectDescription(project.description ?? "");
+                      setIsEditingProject(true);
+                    }}
+                  >
+                    Edit project
+                  </button>
+                  <button
+                    className="button ghost danger"
+                    disabled={deleteProjectMutation.isPending || !canDeleteProject}
+                    onClick={() => {
+                      if (window.confirm("Are you sure you want to delete this project? This action cannot be undone.")) {
+                        deleteProjectMutation.mutate();
+                      }
+                    }}
+                  >
+                    Delete project
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </article>
       </div>

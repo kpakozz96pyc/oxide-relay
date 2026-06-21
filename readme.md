@@ -77,6 +77,12 @@ Landing Site
 Admin Panel
 ```
 
+When a new project is created, OxideRelay bootstraps the initial structure automatically:
+
+* Default namespace: `common`
+* Default environments: `development`, `staging`, `production`
+* Default language: `en` (`English`)
+
 ---
 
 ## Language

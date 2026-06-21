@@ -63,7 +63,11 @@ export function AppLayout(props: {
             className="button ghost"
             style={{ width: "100%", gap: "var(--space-2)" }}
             onClick={async () => {
-              await props.onLogout();
+              try {
+                await props.onLogout();
+              } catch (e) {
+                console.error("Logout error", e);
+              }
               navigate("/login", { replace: true });
             }}
             type="button"

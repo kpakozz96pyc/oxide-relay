@@ -16,8 +16,11 @@ export function useSession() {
       await queryClient.invalidateQueries({ queryKey: ["session"] });
     },
     async logout() {
-      await apiPost("/api/v1/auth/logout", undefined);
-      await queryClient.invalidateQueries({ queryKey: ["session"] });
+      try {
+        await apiPost("/api/v1/auth/logout", undefined);
+      } finally {
+        queryClient.setQueryData(["session"], null as any);
+      }
     },
   };
 }

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPut, apiDelete, buildErrorMessage, Project } from "../api";
 import { usePermissionSet } from "../hooks/usePermissionSet";
@@ -9,10 +10,6 @@ export function ProjectsPage() {
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectSlug, setNewProjectSlug] = useState("");
   const [newProjectDescription, setNewProjectDescription] = useState("");
-  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
-  const [editProjectName, setEditProjectName] = useState("");
-  const [editProjectSlug, setEditProjectSlug] = useState("");
-  const [editProjectDescription, setEditProjectDescription] = useState("");
   const queryClient = useQueryClient();
   const permissionSet = usePermissionSet();
 
@@ -33,34 +30,6 @@ export function ProjectsPage() {
       setNewProjectName("");
       setNewProjectSlug("");
       setNewProjectDescription("");
-    },
-  });
-
-  const updateProjectMutation = useMutation({
-    mutationFn: async () => {
-      const project = projects.find((item) => item.id === editingProjectId);
-      if (!project) {
-        throw new Error("No project selected for editing.");
-      }
-      return apiPut(`/api/v1/projects/${project.slug}`, {
-        name: editProjectName,
-        slug: editProjectSlug,
-        description: editProjectDescription || null,
-      });
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      setEditingProjectId(null);
-      setEditProjectName("");
-      setEditProjectSlug("");
-      setEditProjectDescription("");
-    },
-  });
-
-  const deleteProjectMutation = useMutation({
-    mutationFn: async (projectSlug: string) => apiDelete(`/api/v1/projects/${projectSlug}`),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
   });
 
@@ -87,12 +56,6 @@ export function ProjectsPage() {
 
       {createProjectMutation.isError ? (
         <div className="banner error">{buildErrorMessage(createProjectMutation.error)}</div>
-      ) : null}
-      {updateProjectMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(updateProjectMutation.error)}</div>
-      ) : null}
-      {deleteProjectMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(deleteProjectMutation.error)}</div>
       ) : null}
 
       <article className="panel stack gap-md">
@@ -127,76 +90,15 @@ export function ProjectsPage() {
 
       <div className="project-grid">
         {projects.map((project) => (
-          <div className="project-card" key={project.id}>
+          <Link className="project-card" key={project.id} to={`/projects/${project.slug}`}>
             <div className="stack gap-sm">
-              <span className="badge subtle">{project.is_owner ? "Owner" : "Member"}</span>
-              {editingProjectId === project.id ? (
-                <>
-                  <input value={editProjectName} onChange={(event) => setEditProjectName(event.target.value)} />
-                  <input value={editProjectSlug} onChange={(event) => setEditProjectSlug(event.target.value)} />
-                  <textarea
-                    className="textarea"
-                    rows={4}
-                    value={editProjectDescription}
-                    onChange={(event) => setEditProjectDescription(event.target.value)}
-                  />
-                </>
-              ) : (
-                <>
-                  <h2>{project.name}</h2>
-                  <p>{project.description ?? "No description yet."}</p>
-                </>
-              )}
+              <span className="badge subtle" style={{ alignSelf: "flex-start" }}>
+                {project.is_owner ? "Owner" : "Member"}
+              </span>
+              <h2>{project.name}</h2>
+              <p>{project.description ?? "No description yet."}</p>
             </div>
-            <div className="action-row">
-              {editingProjectId === project.id ? (
-                <>
-                  <button className="button secondary" disabled={updateProjectMutation.isPending} onClick={() => updateProjectMutation.mutate()}>
-                    Save
-                  </button>
-                  <button
-                    className="button ghost"
-                    onClick={() => {
-                      setEditingProjectId(null);
-                      setEditProjectName("");
-                      setEditProjectSlug("");
-                      setEditProjectDescription("");
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </>
-              ) : (
-                <>
-                  <a className="project-link" href={`/projects/${project.slug}`}>
-                    Open project
-                  </a>
-                  <button
-                    className="button secondary"
-                    disabled={!project.is_owner && !permissionSet.has("EditProjects")}
-                    onClick={() => {
-                      setEditingProjectId(project.id);
-                      setEditProjectName(project.name);
-                      setEditProjectSlug(project.slug);
-                      setEditProjectDescription(project.description ?? "");
-                    }}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    className="button ghost danger"
-                    disabled={
-                      deleteProjectMutation.isPending ||
-                      (!project.is_owner && !permissionSet.has("DeleteProjects"))
-                    }
-                    onClick={() => deleteProjectMutation.mutate(project.slug)}
-                  >
-                    Delete
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
+          </Link>
         ))}
       </div>
     </section>

@@ -376,6 +376,11 @@ Each response key is formatted as {namespace}.{key}.
 The key stored in the database does not include the namespace prefix.
 ```
 
+Locale bundle responses include a `version` field and support `ETag` / `If-None-Match`.
+When using a versioned URL such as
+`/api/v1/projects/hr-portal/locales/ru?environment=production&v=<version>`,
+the response is cacheable as immutable content.
+
 ---
 
 # Static JSON Delivery
@@ -384,10 +389,18 @@ Translation delivery for frontend applications.
 
 In MVP, static JSON endpoints are public.
 
+Recommended flow:
+
+```http
+GET /api/v1/projects/hr-portal/delivery-manifest/ru?environment=production
+```
+
+The manifest returns versioned URLs for the locale bundle and each namespace JSON file.
+
 Example:
 
 ```http
-GET /static/hr-portal/production/ru/common.json
+GET /static/hr-portal/production/ru/common.json?v=<version>
 ```
 
 Response:
@@ -400,6 +413,8 @@ Response:
 ```
 
 Static JSON returns one namespace per file, so response keys are not namespace-prefixed.
+Versioned static URLs use long-lived immutable browser caching.
+Unversioned static URLs still work and use short TTL plus revalidation headers.
 
 ---
 

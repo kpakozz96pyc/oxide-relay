@@ -11,6 +11,7 @@ import {
   Language,
   Namespace,
   Environment,
+  DeliveryManifest,
   ProjectMember,
   Translation,
 } from "../api";
@@ -83,6 +84,15 @@ export function ProjectPage() {
     queryKey: ["project", projectSlug, "members"],
     queryFn: () => apiGet<ProjectMember[]>(`/api/v1/projects/${projectSlug}/members`),
     enabled: Boolean(projectSlug) && canViewMembers,
+  });
+
+  const deliveryManifestQuery = useQuery({
+    queryKey: ["project", projectSlug, "delivery-manifest", environment, language],
+    queryFn: () =>
+      apiGet<DeliveryManifest>(
+        `/api/v1/projects/${projectSlug}/delivery-manifest/${encodeURIComponent(language)}?environment=${encodeURIComponent(environment)}`,
+      ),
+    enabled: Boolean(projectSlug && environment && language),
   });
 
   useEffect(() => {
@@ -169,7 +179,7 @@ export function ProjectPage() {
 
   const updateProjectMutation = useMutation({
     mutationFn: async () =>
-      apiPut(`/api/v1/projects/${projectSlug}`, {
+      apiPut<Project>(`/api/v1/projects/${projectSlug}`, {
         name: editProjectName,
         slug: editProjectSlug,
         description: editProjectDescription || null,
@@ -308,18 +318,13 @@ export function ProjectPage() {
   const canImportTranslations =
     project.is_owner ||
     (permissionSet.has("ImportTranslations") && canEditCurrentEnvironment);
-  const localeBundleHref =
-    environment && language
-      ? `/api/v1/projects/${encodeURIComponent(projectSlug)}/locales/${encodeURIComponent(language)}?environment=${encodeURIComponent(environment)}`
-      : null;
+  const localeBundleHref = deliveryManifestQuery.data?.locale_bundle_url ?? null;
   const namespaceJsonLinks =
-    environment && language
-      ? (namespacesQuery.data ?? []).map((item) => ({
-          id: item.id,
-          name: item.name,
-          href: `/static/${encodeURIComponent(projectSlug)}/${encodeURIComponent(environment)}/${encodeURIComponent(language)}/${encodeURIComponent(item.name)}.json`,
-        }))
-      : [];
+    deliveryManifestQuery.data?.namespaces.map((item) => ({
+      id: item.name,
+      name: item.name,
+      href: item.url,
+    })) ?? [];
 
   return (
     <section className="page">

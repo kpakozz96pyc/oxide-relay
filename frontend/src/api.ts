@@ -40,6 +40,21 @@ export type Environment = {
   updated_at: string;
 };
 
+export type DeliveryManifestNamespace = {
+  name: string;
+  version: string;
+  url: string;
+};
+
+export type DeliveryManifest = {
+  project: string;
+  locale: string;
+  environment: string;
+  locale_bundle_version: string;
+  locale_bundle_url: string;
+  namespaces: DeliveryManifestNamespace[];
+};
+
 export type Translation = {
   id: string;
   translation_key_id: string;

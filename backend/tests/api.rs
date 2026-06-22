@@ -191,15 +191,71 @@ async fn public_delivery_endpoints_return_expected_payloads() {
         .await;
 
     assert_eq!(locale_response.status(), StatusCode::OK);
+    assert_eq!(
+        locale_response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("cache-control"),
+        "public, max-age=300, must-revalidate"
+    );
+    let locale_etag = locale_response
+        .headers()
+        .get(header::ETAG)
+        .expect("etag")
+        .to_str()
+        .expect("etag header")
+        .to_owned();
     let locale_body = json_body(locale_response).await;
     assert_eq!(locale_body["project"], "delivery-project");
+    assert!(locale_body["version"].as_str().is_some());
     assert_eq!(locale_body["values"]["common.button.save"], "Сохранить");
+
+    let locale_not_modified = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/delivery-project/locales/ru?environment=production")
+                .header(header::IF_NONE_MATCH, locale_etag)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(locale_not_modified.status(), StatusCode::NOT_MODIFIED);
+
+    let manifest_response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/delivery-project/delivery-manifest/ru?environment=production")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(manifest_response.status(), StatusCode::OK);
+    assert_eq!(
+        manifest_response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("cache-control"),
+        "public, max-age=300, must-revalidate"
+    );
+    let manifest_body = json_body(manifest_response).await;
+    let locale_bundle_url = manifest_body["locale_bundle_url"]
+        .as_str()
+        .expect("locale bundle url");
+    assert!(locale_bundle_url.contains("/api/v1/projects/delivery-project/locales/ru?environment=production&v="));
+    let namespace_url = manifest_body["namespaces"][0]["url"]
+        .as_str()
+        .expect("namespace url");
+    assert!(namespace_url.contains("/static/delivery-project/production/ru/common.json?v="));
 
     let static_response = harness
         .request(
             Request::builder()
                 .method("GET")
-                .uri("/static/delivery-project/production/ru/common.json")
+                .uri(namespace_url)
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -211,10 +267,37 @@ async fn public_delivery_endpoints_return_expected_payloads() {
             .headers()
             .get(header::CACHE_CONTROL)
             .expect("cache-control"),
-        "public, max-age=300"
+        "public, max-age=31536000, immutable"
     );
+    let etag = static_response
+        .headers()
+        .get(header::ETAG)
+        .expect("etag")
+        .to_str()
+        .expect("etag header")
+        .to_owned();
     let static_body = json_body(static_response).await;
     assert_eq!(static_body["button.save"], "Сохранить");
+
+    let not_modified_response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(namespace_url)
+                .header(header::IF_NONE_MATCH, etag)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(not_modified_response.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        not_modified_response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("cache-control"),
+        "public, max-age=31536000, immutable"
+    );
 }
 
 #[tokio::test]

@@ -103,6 +103,10 @@ pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
             get(delivery::locale_bundle),
         )
         .route(
+            "/api/v1/projects/{project_slug}/delivery-manifest/{language_code}",
+            get(delivery::delivery_manifest),
+        )
+        .route(
             "/static/{project_slug}/{environment_slug}/{language_code}/{*namespace_file}",
             get(delivery::static_namespace_file),
         )

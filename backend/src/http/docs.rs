@@ -9,7 +9,10 @@ use crate::{
             AddProjectMemberRequest, CreateUserRequest, PermissionResponse, ProjectMemberResponse,
             ReplaceUserPermissionsRequest, UpdateUserRequest, UserResponse,
         },
-        delivery::{LocaleBundleQuery, LocaleBundleResponse},
+        delivery::{
+            DeliveryManifestNamespace, DeliveryManifestResponse, DeliveryQuery,
+            LocaleBundleResponse, StaticNamespaceQuery,
+        },
         projects::{
             CreateEnvironmentRequest, CreateLanguageRequest, CreateNamespaceRequest,
             CreateProjectRequest, EnvironmentResponse, LanguageResponse, NamespaceResponse,
@@ -61,6 +64,7 @@ use crate::{
         crate::http::translations::import_translations,
         crate::http::translations::export_translations,
         crate::http::delivery::locale_bundle,
+        crate::http::delivery::delivery_manifest,
         crate::http::delivery::static_namespace_file,
     ),
     components(schemas(
@@ -92,8 +96,11 @@ use crate::{
         ImportTranslationsRequest,
         ImportTranslationsResponse,
         ExportTranslationsQuery,
-        LocaleBundleQuery,
+        DeliveryQuery,
+        StaticNamespaceQuery,
         LocaleBundleResponse,
+        DeliveryManifestResponse,
+        DeliveryManifestNamespace,
     )),
     info(
         title = "OxideRelay API",

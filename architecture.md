@@ -693,6 +693,7 @@ Endpoint:
 
 ```http
 GET /api/v1/projects/{project_slug}/locales/{language_code}?environment={environment_slug}
+GET /api/v1/projects/{project_slug}/delivery-manifest/{language_code}?environment={environment_slug}
 ```
 
 Rules:
@@ -702,6 +703,7 @@ Rules:
 * Keys in `values` are namespace-prefixed, for example `common.button.save`.
 * Delivery endpoints are public in MVP.
 * Keys are built as `{namespace}.{key}` where `key` is stored without a namespace prefix.
+* Delivery responses expose version tokens that can be used to build immutable URLs.
 
 ---
 
@@ -712,13 +714,13 @@ Frontend applications can consume translations as static JSON.
 Endpoint:
 
 ```http
-GET /static/{project}/{environment}/{locale}/{namespace}.json
+GET /static/{project}/{environment}/{locale}/{namespace}.json?v={version}
 ```
 
 Example:
 
 ```http
-GET /static/hr-portal/production/ru/common.json
+GET /static/hr-portal/production/ru/common.json?v=4f2f0f7f4ad6e6d1
 ```
 
 Response:

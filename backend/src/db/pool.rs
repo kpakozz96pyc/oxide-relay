@@ -17,10 +17,11 @@ pub async fn connect(
         .create_if_missing(true)
         .foreign_keys(true)
         .journal_mode(SqliteJournalMode::Wal)
-        .synchronous(SqliteSynchronous::Normal);
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(std::time::Duration::from_secs(3));
 
     let pool = SqlitePoolOptions::new()
-        .max_connections(10)
+        .max_connections(5)
         .connect_with(options)
         .await?;
 

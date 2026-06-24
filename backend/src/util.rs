@@ -40,3 +40,13 @@ pub fn required_non_empty<'a>(value: &'a str, message: &'static str) -> AppResul
     }
     Ok(trimmed)
 }
+
+/// Validates that a trimmed string does not exceed `max_len` characters.
+pub fn validate_max_length(value: &str, max_len: usize, field_name: &str) -> AppResult<()> {
+    if value.trim().len() > max_len {
+        return Err(ApiError::validation(format!(
+            "{field_name} must be at most {max_len} characters."
+        )));
+    }
+    Ok(())
+}

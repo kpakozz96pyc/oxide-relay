@@ -535,6 +535,67 @@ async fn creating_project_bootstraps_default_language_namespace_and_environments
 }
 
 #[tokio::test]
+async fn translation_grid_supports_search_pagination_and_multiple_languages() {
+    let harness = TestHarness::new().await;
+    let owner_id = harness
+        .insert_user("grid-owner@example.com", "owner-password", "Grid Owner", true)
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Grid Project", "grid-project")
+        .await;
+    harness.add_project_access(&owner_id, &project_id).await;
+
+    let namespace_id = harness.insert_namespace(&project_id, "common").await;
+    let en_language_id = harness.insert_language(&project_id, "en", "English").await;
+    let ru_language_id = harness.insert_language(&project_id, "ru", "Russian").await;
+    let environment_id = harness
+        .insert_environment(&project_id, "Production", "production")
+        .await;
+
+    let first_key_id = harness
+        .insert_translation_key(&project_id, &namespace_id, "button.save")
+        .await;
+    harness
+        .insert_translation_value(&first_key_id, &en_language_id, &environment_id, "Save")
+        .await;
+    harness
+        .insert_translation_value(&first_key_id, &ru_language_id, &environment_id, "Сохранить")
+        .await;
+
+    let second_key_id = harness
+        .insert_translation_key(&project_id, &namespace_id, "button.cancel")
+        .await;
+    harness
+        .insert_translation_value(&second_key_id, &en_language_id, &environment_id, "Cancel")
+        .await;
+    harness
+        .insert_translation_value(&second_key_id, &ru_language_id, &environment_id, "Отмена")
+        .await;
+
+    let owner_cookie = harness.login("grid-owner@example.com", "owner-password").await;
+    let response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/grid-project/translations/grid?environment=production&languages=en,ru&search=%D0%A1%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B8%D1%82%D1%8C&page=1&page_size=1")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["page"], 1);
+    assert_eq!(body["page_size"], 1);
+    assert_eq!(body["items"].as_array().expect("items").len(), 1);
+    assert_eq!(body["items"][0]["key"], "button.save");
+    assert_eq!(body["items"][0]["values"]["en"]["value"], "Save");
+    assert_eq!(body["items"][0]["values"]["ru"]["value"], "Сохранить");
+}
+
+#[tokio::test]
 async fn translation_crud_import_export_and_environment_acl_work() {
     let harness = TestHarness::new().await;
     let owner_id = harness

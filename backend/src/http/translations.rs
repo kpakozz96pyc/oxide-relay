@@ -13,12 +13,62 @@ use crate::{
     auth::{self, AuthenticatedUser, EnvironmentAccessKind},
     errors::{ApiError, AppResult},
     repository::translations,
-    util::{optional_trimmed, required_non_empty},
+    util::{optional_trimmed, required_non_empty, validate_max_length},
 };
 
 // ---------------------------------------------------------------------------
 // Translations
 // ---------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_slug}/translations/grid",
+    params(
+        ("project_slug" = String, Path, description = "Project slug"),
+        TranslationGridQuery
+    ),
+    responses((status = 200, body = TranslationGridResponse))
+)]
+pub async fn list_translation_grid(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(project_slug): Path<String>,
+    Query(query): Query<TranslationGridQuery>,
+) -> AppResult<Json<TranslationGridResponse>> {
+    let environment_slug = required_non_empty(&query.environment, "Environment is required.")?;
+    let project = auth::authorize_project(&state, &user, &project_slug, "ReadTranslations").await?;
+    auth::require_environment_permission(
+        &state,
+        &user,
+        &project,
+        EnvironmentAccessKind::Read,
+        environment_slug,
+    )
+    .await?;
+
+    let language_codes = query
+        .languages
+        .as_deref()
+        .map(parse_languages_query)
+        .transpose()?
+        .unwrap_or_default();
+    let page = query.page.unwrap_or(1);
+    let page_size = query.page_size.unwrap_or(25);
+
+    let result = translations::list_grid(
+        &state.pool,
+        &project.id,
+        environment_slug,
+        optional_trimmed(query.namespace.as_deref()),
+        optional_trimmed(query.search.as_deref()),
+        &language_codes,
+        page,
+        page_size,
+    )
+    .await?;
+
+    Ok(Json(TranslationGridResponse::from(result)))
+}
 
 #[utoipa::path(
     get,
@@ -272,6 +322,12 @@ fn validate_create_translation(payload: &CreateTranslationRequest) -> AppResult<
         ));
     }
 
+    validate_max_length(&payload.key, 500, "Translation key")?;
+    validate_max_length(&payload.value, 10_000, "Translation value")?;
+    if let Some(desc) = &payload.description {
+        validate_max_length(desc, 2000, "Description")?;
+    }
+
     if payload.key.contains(':')
         || payload
             .key
@@ -311,7 +367,28 @@ fn validate_import_request(payload: &ImportTranslationsRequest) -> AppResult<()>
         ));
     }
 
+    if payload.values.len() > 5000 {
+        return Err(ApiError::validation(
+            "Import batch must not exceed 5000 entries.",
+        ));
+    }
+
     Ok(())
+}
+
+fn parse_languages_query(value: &str) -> AppResult<Vec<String>> {
+    let languages = value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+
+    if languages.is_empty() {
+        return Err(ApiError::validation("At least one language must be selected."));
+    }
+
+    Ok(languages)
 }
 
 // ---------------------------------------------------------------------------
@@ -323,6 +400,16 @@ pub struct ListTranslationsQuery {
     pub environment: String,
     pub language: Option<String>,
     pub namespace: Option<String>,
+}
+
+#[derive(Debug, Deserialize, IntoParams, ToSchema)]
+pub struct TranslationGridQuery {
+    pub environment: String,
+    pub namespace: Option<String>,
+    pub languages: Option<String>,
+    pub search: Option<String>,
+    pub page: Option<usize>,
+    pub page_size: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -390,6 +477,67 @@ impl From<translations::TranslationRecord> for TranslationResponse {
             updated_by_user_id: r.updated_by_user_id,
             created_at: r.created_at,
             updated_at: r.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TranslationGridResponse {
+    pub items: Vec<TranslationGridRowResponse>,
+    pub total: usize,
+    pub page: usize,
+    pub page_size: usize,
+}
+
+impl From<translations::TranslationGridPageRecord> for TranslationGridResponse {
+    fn from(value: translations::TranslationGridPageRecord) -> Self {
+        Self {
+            items: value.items.into_iter().map(TranslationGridRowResponse::from).collect(),
+            total: value.total,
+            page: value.page,
+            page_size: value.page_size,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TranslationGridRowResponse {
+    pub representative_translation_id: String,
+    pub translation_key_id: String,
+    pub key: String,
+    pub description: Option<String>,
+    pub namespace: String,
+    pub values: BTreeMap<String, TranslationGridValueResponse>,
+}
+
+impl From<translations::TranslationGridRowRecord> for TranslationGridRowResponse {
+    fn from(value: translations::TranslationGridRowRecord) -> Self {
+        Self {
+            representative_translation_id: value.representative_translation_id,
+            translation_key_id: value.translation_key_id,
+            key: value.key,
+            description: value.description,
+            namespace: value.namespace,
+            values: value
+                .values
+                .into_iter()
+                .map(|(language_code, cell)| (language_code, TranslationGridValueResponse::from(cell)))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TranslationGridValueResponse {
+    pub id: Option<String>,
+    pub value: String,
+}
+
+impl From<translations::TranslationGridValueRecord> for TranslationGridValueResponse {
+    fn from(value: translations::TranslationGridValueRecord) -> Self {
+        Self {
+            id: value.id,
+            value: value.value,
         }
     }
 }

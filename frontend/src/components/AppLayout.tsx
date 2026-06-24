@@ -1,4 +1,4 @@
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import { FolderOpen, Users, FileCode, LogOut } from "lucide-react";
 import { usePermissionSet } from "../hooks/usePermissionSet";
 
@@ -31,21 +31,21 @@ export function AppLayout(props: {
           </div>
 
           <nav className="nav-links">
-            <a
-              href="/projects"
+            <Link
+              to="/projects"
               className={isActive("/projects") ? "active" : ""}
             >
               <FolderOpen size={16} />
               Projects
-            </a>
+            </Link>
             {canOpenUsersWorkspace ? (
-              <a
-                href="/users"
+              <Link
+                to="/users"
                 className={isActive("/users") ? "active" : ""}
               >
                 <Users size={16} />
                 Users
-              </a>
+              </Link>
             ) : null}
             <a href="/api/openapi.json" target="_blank" rel="noreferrer">
               <FileCode size={16} />

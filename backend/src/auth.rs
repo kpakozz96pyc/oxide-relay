@@ -67,6 +67,9 @@ pub async fn login(
 
     verify_password(&payload.password, &user.password_hash)?;
 
+    // Opportunistically clean up expired sessions to prevent unbounded growth.
+    let _ = sessions::purge_expired(&state.pool).await;
+
     let session_id = Uuid::new_v4().to_string();
     let expires_at = future_utc(state.session.ttl_hours)?;
 

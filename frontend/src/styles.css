@@ -206,6 +206,19 @@ th {
   border-bottom: none;
 }
 
+.translation-grid-shell td {
+  min-width: 180px;
+}
+
+.new-term-row td {
+  background: color-mix(in srgb, #fff7ed 62%, var(--surface-raised) 38%);
+}
+
+.translation-grid-shell td:first-child,
+.translation-grid-shell td:nth-child(2) {
+  min-width: 140px;
+}
+
 /* ============================================================
    FORM ELEMENTS
    ============================================================ */
@@ -241,6 +254,90 @@ th {
 .field select::placeholder,
 .textarea::placeholder {
   color: var(--text-muted);
+}
+
+.grid-input {
+  width: 100%;
+  min-width: 140px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 72%, white 28%);
+  color: var(--text-primary);
+  padding: var(--space-3);
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+
+.grid-input:focus,
+.grid-input.is-focused {
+  border-color: color-mix(in srgb, #d97706 52%, var(--border-strong) 48%);
+  background: color-mix(in srgb, #fff7ed 72%, var(--surface-raised) 28%);
+  box-shadow: 0 0 0 3px color-mix(in srgb, #fdba74 35%, transparent 65%);
+}
+
+.translation-toolbar {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: minmax(260px, 1.4fr) minmax(220px, 1fr) 120px;
+  align-items: end;
+}
+
+.search-field {
+  min-width: 0;
+}
+
+.compact-field {
+  min-width: 0;
+}
+
+.language-filter {
+  position: relative;
+  min-width: 0;
+}
+
+.dropdown-shell {
+  position: relative;
+}
+
+.dropdown-panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 20;
+  min-width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.12);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.dropdown-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.table-actions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.add-row-button {
+  min-width: 44px;
+  padding-inline: 0;
 }
 
 .field input:hover,

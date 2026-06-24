@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useDeferredValue, useEffect, useRef, useState, type FocusEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -14,25 +14,33 @@ import {
   DeliveryManifest,
   ProjectMember,
   Translation,
+  TranslationGridResponse,
+  TranslationGridRow,
 } from "../api";
 import { usePermissionSet } from "../hooks/usePermissionSet";
 import { readEnvironmentPermission, editEnvironmentPermission } from "../lib/permissions";
 import { LoadingScreen } from "../components/LoadingScreen";
 import { ErrorCard } from "../components/ErrorCard";
 import { MetaRow } from "../components/MetaRow";
+import { ProjectSettingsPanel } from "./project/ProjectSettingsPanel";
+import { ProjectMembersPanel } from "./project/ProjectMembersPanel";
+import { ProjectResourcesPanel } from "./project/ProjectResourcesPanel";
+import { ProjectDeliveryLinksPanel } from "./project/ProjectDeliveryLinksPanel";
+
+type NewTermDraft = {
+  id: string;
+  key: string;
+  description: string;
+  values: Record<string, string>;
+};
 
 export function ProjectPage() {
   const { projectSlug = "" } = useParams();
   const navigate = useNavigate();
+  const translationGridRef = useRef<HTMLDivElement | null>(null);
   const [environment, setEnvironment] = useState("");
   const [language, setLanguage] = useState("");
   const [namespace, setNamespace] = useState("");
-  const [newKey, setNewKey] = useState("");
-  const [newValue, setNewValue] = useState("");
-  const [newDescription, setNewDescription] = useState("");
-  const [editingTranslationId, setEditingTranslationId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const [editDescription, setEditDescription] = useState("");
   const [importJson, setImportJson] = useState(
     JSON.stringify(
       {
@@ -43,16 +51,17 @@ export function ProjectPage() {
       2,
     ),
   );
-  const [memberUserId, setMemberUserId] = useState("");
-  const [newLanguageCode, setNewLanguageCode] = useState("");
-  const [newLanguageName, setNewLanguageName] = useState("");
-  const [newNamespaceName, setNewNamespaceName] = useState("");
-  const [newEnvironmentName, setNewEnvironmentName] = useState("");
-  const [newEnvironmentSlug, setNewEnvironmentSlug] = useState("");
-  const [isEditingProject, setIsEditingProject] = useState(false);
-  const [editProjectName, setEditProjectName] = useState("");
-  const [editProjectSlug, setEditProjectSlug] = useState("");
-  const [editProjectDescription, setEditProjectDescription] = useState("");
+  const [translationSearch, setTranslationSearch] = useState("");
+  const [pageSize, setPageSize] = useState(25);
+  const [page, setPage] = useState(1);
+  const [selectedLanguageCodes, setSelectedLanguageCodes] = useState<string[]>([]);
+  const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
+  const [draftValues, setDraftValues] = useState<Record<string, string>>({});
+  const [focusedCell, setFocusedCell] = useState<string | null>(null);
+  const [newTermDrafts, setNewTermDrafts] = useState<NewTermDraft[]>([
+    { id: crypto.randomUUID(), key: "", description: "", values: {} },
+  ]);
+  const deferredTranslationSearch = useDeferredValue(translationSearch.trim());
   const queryClient = useQueryClient();
   const permissionSet = usePermissionSet();
 
@@ -80,20 +89,6 @@ export function ProjectPage() {
   });
 
   const canViewMembers = Boolean(projectQuery.data?.is_owner) || permissionSet.has("ManageProjectMembers");
-  const membersQuery = useQuery({
-    queryKey: ["project", projectSlug, "members"],
-    queryFn: () => apiGet<ProjectMember[]>(`/api/v1/projects/${projectSlug}/members`),
-    enabled: Boolean(projectSlug) && canViewMembers,
-  });
-
-  const deliveryManifestQuery = useQuery({
-    queryKey: ["project", projectSlug, "delivery-manifest", environment, language],
-    queryFn: () =>
-      apiGet<DeliveryManifest>(
-        `/api/v1/projects/${projectSlug}/delivery-manifest/${encodeURIComponent(language)}?environment=${encodeURIComponent(environment)}`,
-      ),
-    enabled: Boolean(projectSlug && environment && language),
-  });
 
   useEffect(() => {
     if (!environment && environmentsQuery.data?.[0]) {
@@ -108,23 +103,68 @@ export function ProjectPage() {
   }, [language, languagesQuery.data]);
 
   useEffect(() => {
+    if (languagesQuery.data?.length && selectedLanguageCodes.length === 0) {
+      setSelectedLanguageCodes([languagesQuery.data[0].code]);
+    }
+  }, [languagesQuery.data, selectedLanguageCodes.length]);
+
+  useEffect(() => {
+    if (language && !selectedLanguageCodes.includes(language)) {
+      setSelectedLanguageCodes((current) => [...current, language]);
+    }
+  }, [language, selectedLanguageCodes]);
+
+  useEffect(() => {
     if (!namespace && namespacesQuery.data?.[0]) {
       setNamespace(namespacesQuery.data[0].name);
     }
   }, [namespace, namespacesQuery.data]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [environment, namespace, deferredTranslationSearch, pageSize, selectedLanguageCodes.join(",")]);
+
   const translationsQuery = useQuery({
-    queryKey: ["project", projectSlug, "translations", environment, language, namespace],
+    queryKey: [
+      "project",
+      projectSlug,
+      "translations-grid",
+      environment,
+      namespace,
+      selectedLanguageCodes,
+      deferredTranslationSearch,
+      page,
+      pageSize,
+    ],
     queryFn: () =>
-      apiGet<Translation[]>(
-        `/api/v1/projects/${projectSlug}/translations?environment=${encodeURIComponent(environment)}&language=${encodeURIComponent(language)}&namespace=${encodeURIComponent(namespace)}`,
+      apiGet<TranslationGridResponse>(
+        `/api/v1/projects/${projectSlug}/translations/grid?${new URLSearchParams({
+          environment,
+          namespace,
+          languages: selectedLanguageCodes.join(","),
+          search: deferredTranslationSearch,
+          page: String(page),
+          page_size: String(pageSize),
+        }).toString()}`,
       ),
     enabled:
-      Boolean(projectSlug && environment && language && namespace) &&
+      Boolean(projectSlug && environment && namespace && selectedLanguageCodes.length > 0) &&
       (Boolean(projectQuery.data?.is_owner) ||
         (permissionSet.has("ReadTranslations") &&
           permissionSet.has(readEnvironmentPermission(environment)))),
   });
+
+  useEffect(() => {
+    const nextDrafts: Record<string, string> = {};
+    for (const row of translationsQuery.data?.items ?? []) {
+      nextDrafts[`desc:${row.translation_key_id}`] = row.description ?? "";
+      for (const languageCode of selectedLanguageCodes) {
+        nextDrafts[`value:${row.translation_key_id}:${languageCode}`] =
+          row.values[languageCode]?.value ?? "";
+      }
+    }
+    setDraftValues(nextDrafts);
+  }, [translationsQuery.data, selectedLanguageCodes]);
 
   const importMutation = useMutation({
     mutationFn: async () => {
@@ -137,70 +177,55 @@ export function ProjectPage() {
       });
     },
     onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations-grid"] });
       await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations"] });
     },
   });
 
   const createMutation = useMutation({
-    mutationFn: async () =>
+    mutationFn: async ({
+      key,
+      languageCode,
+      value,
+      description,
+    }: {
+      key: string;
+      languageCode: string;
+      value: string;
+      description?: string;
+    }) =>
       apiPost(`/api/v1/projects/${projectSlug}/translations`, {
         environment,
-        language,
+        language: languageCode,
         namespace,
-        key: newKey,
-        value: newValue,
-        description: newDescription || undefined,
+        key,
+        value,
+        description,
       }),
     onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations-grid"] });
       await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations"] });
-      setNewKey("");
-      setNewValue("");
-      setNewDescription("");
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: async () => {
-      if (!editingTranslationId) {
-        throw new Error("No translation selected for editing.");
-      }
-      return apiPut(`/api/v1/projects/${projectSlug}/translations/${editingTranslationId}`, {
-        value: editValue,
-        description: editDescription || null,
+    mutationFn: async ({
+      translationValueId,
+      value,
+      description,
+    }: {
+      translationValueId: string;
+      value?: string;
+      description?: string | null;
+    }) => {
+      return apiPut(`/api/v1/projects/${projectSlug}/translations/${translationValueId}`, {
+        value,
+        description,
       });
     },
     onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations-grid"] });
       await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations"] });
-      setEditingTranslationId(null);
-      setEditValue("");
-      setEditDescription("");
-    },
-  });
-
-  const updateProjectMutation = useMutation({
-    mutationFn: async () =>
-      apiPut<Project>(`/api/v1/projects/${projectSlug}`, {
-        name: editProjectName,
-        slug: editProjectSlug,
-        description: editProjectDescription || null,
-      }),
-    onSuccess: async (data: Project) => {
-      setIsEditingProject(false);
-      if (data.slug !== projectSlug) {
-        queryClient.setQueryData(["project", data.slug], data);
-        queryClient.removeQueries({ queryKey: ["project", projectSlug] });
-        navigate(`/projects/${data.slug}`, { replace: true });
-      } else {
-        await queryClient.invalidateQueries({ queryKey: ["project", projectSlug] });
-      }
-    },
-  });
-
-  const deleteProjectMutation = useMutation({
-    mutationFn: async () => apiDelete(`/api/v1/projects/${projectSlug}`),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      navigate("/projects", { replace: true });
     },
   });
 
@@ -208,86 +233,8 @@ export function ProjectPage() {
     mutationFn: async (translationId: string) =>
       apiDelete(`/api/v1/projects/${projectSlug}/translations/${translationId}`),
     onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations-grid"] });
       await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations"] });
-    },
-  });
-
-  const addMemberMutation = useMutation({
-    mutationFn: async () =>
-      apiPost(`/api/v1/projects/${projectSlug}/members`, {
-        user_id: memberUserId,
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "members"] });
-      setMemberUserId("");
-    },
-  });
-
-  const removeMemberMutation = useMutation({
-    mutationFn: async (userId: string) => apiDelete(`/api/v1/projects/${projectSlug}/members/${userId}`),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "members"] });
-    },
-  });
-
-  const createLanguageMutation = useMutation({
-    mutationFn: async () =>
-      apiPost(`/api/v1/projects/${projectSlug}/languages`, {
-        code: newLanguageCode,
-        name: newLanguageName,
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "languages"] });
-      setNewLanguageCode("");
-      setNewLanguageName("");
-    },
-  });
-
-  const deleteLanguageMutation = useMutation({
-    mutationFn: async (languageCode: string) =>
-      apiDelete(`/api/v1/projects/${projectSlug}/languages/${languageCode}`),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "languages"] });
-    },
-  });
-
-  const createNamespaceMutation = useMutation({
-    mutationFn: async () =>
-      apiPost(`/api/v1/projects/${projectSlug}/namespaces`, {
-        name: newNamespaceName,
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "namespaces"] });
-      setNewNamespaceName("");
-    },
-  });
-
-  const deleteNamespaceMutation = useMutation({
-    mutationFn: async (namespaceName: string) =>
-      apiDelete(`/api/v1/projects/${projectSlug}/namespaces/${namespaceName}`),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "namespaces"] });
-    },
-  });
-
-  const createEnvironmentMutation = useMutation({
-    mutationFn: async () =>
-      apiPost(`/api/v1/projects/${projectSlug}/environments`, {
-        name: newEnvironmentName,
-        slug: newEnvironmentSlug,
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "environments"] });
-      setNewEnvironmentName("");
-      setNewEnvironmentSlug("");
-    },
-  });
-
-  const deleteEnvironmentMutation = useMutation({
-    mutationFn: async (environmentSlug: string) =>
-      apiDelete(`/api/v1/projects/${projectSlug}/environments/${environmentSlug}`),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "environments"] });
     },
   });
 
@@ -318,13 +265,200 @@ export function ProjectPage() {
   const canImportTranslations =
     project.is_owner ||
     (permissionSet.has("ImportTranslations") && canEditCurrentEnvironment);
-  const localeBundleHref = deliveryManifestQuery.data?.locale_bundle_url ?? null;
-  const namespaceJsonLinks =
-    deliveryManifestQuery.data?.namespaces.map((item) => ({
-      id: item.name,
-      name: item.name,
-      href: item.url,
-    })) ?? [];
+  const translationRows = translationsQuery.data?.items ?? [];
+  const totalTranslationRows = translationsQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalTranslationRows / pageSize));
+
+  const updateDraftValue = (draftKey: string, value: string) => {
+    setDraftValues((current) => ({
+      ...current,
+      [draftKey]: value,
+    }));
+  };
+
+  const focusNextGridInput = (currentTarget: HTMLElement) => {
+    const focusable = Array.from(
+      translationGridRef.current?.querySelectorAll<HTMLElement>("[data-grid-focus='true']") ?? [],
+    );
+    const currentIndex = focusable.indexOf(currentTarget);
+    if (currentIndex >= 0) {
+      const nextTarget = focusable[currentIndex + 1] ?? focusable[0];
+      nextTarget?.focus();
+    }
+  };
+
+  const commitDescription = async (row: TranslationGridRow) => {
+    const draftKey = `desc:${row.translation_key_id}`;
+    const nextDescription = (draftValues[draftKey] ?? "").trim();
+    const currentDescription = row.description ?? "";
+    if (nextDescription === currentDescription) {
+      return;
+    }
+    await updateMutation.mutateAsync({
+      translationValueId: row.representative_translation_id,
+      description: nextDescription || null,
+    });
+  };
+
+  const commitTranslationValue = async (row: TranslationGridRow, languageCode: string) => {
+    const draftKey = `value:${row.translation_key_id}:${languageCode}`;
+    const nextValue = (draftValues[draftKey] ?? "").trim();
+    const existingCell = row.values[languageCode];
+    const currentValue = existingCell?.value ?? "";
+
+    if (!nextValue) {
+      updateDraftValue(draftKey, currentValue);
+      return;
+    }
+
+    if (nextValue === currentValue) {
+      return;
+    }
+
+    if (existingCell?.id) {
+      await updateMutation.mutateAsync({
+        translationValueId: existingCell.id,
+        value: nextValue,
+      });
+      return;
+    }
+
+    await apiPost(`/api/v1/projects/${projectSlug}/translations`, {
+      environment,
+      language: languageCode,
+      namespace: row.namespace,
+      key: row.key,
+      value: nextValue,
+      description: (draftValues[`desc:${row.translation_key_id}`] ?? row.description ?? "").trim() || undefined,
+    });
+    await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations-grid"] });
+    await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations"] });
+  };
+
+  const toggleVisibleLanguage = (languageCode: string) => {
+    setSelectedLanguageCodes((current) => {
+      if (current.includes(languageCode)) {
+        if (current.length === 1) {
+          return current;
+        }
+        return current.filter((code) => code !== languageCode);
+      }
+      return [...current, languageCode];
+    });
+  };
+
+  const updateNewTermDraft = (
+    draftId: string,
+    field: "key" | "description",
+    value: string,
+  ) => {
+    setNewTermDrafts((current) =>
+      current.map((draft) => (draft.id === draftId ? { ...draft, [field]: value } : draft)),
+    );
+  };
+
+  const updateNewTermValue = (draftId: string, languageCode: string, value: string) => {
+    setNewTermDrafts((current) =>
+      current.map((draft) =>
+        draft.id === draftId
+          ? {
+              ...draft,
+              values: {
+                ...draft.values,
+                [languageCode]: value,
+              },
+            }
+          : draft,
+      ),
+    );
+  };
+
+  const addNewTermDraftRow = () => {
+    setNewTermDrafts((current) => [
+      ...current,
+      { id: crypto.randomUUID(), key: "", description: "", values: {} },
+    ]);
+  };
+
+  const saveNewTermDraft = async (draftId: string) => {
+    const draft = newTermDrafts.find((item) => item.id === draftId);
+    if (!draft || draft.key.trim().length === 0) {
+      return;
+    }
+
+    const description = draft.description.trim() || undefined;
+    let savedAnyValue = false;
+
+    for (const languageCode of selectedLanguageCodes) {
+      const value = draft.values[languageCode]?.trim();
+      if (!value) {
+        continue;
+      }
+      await createMutation.mutateAsync({
+        key: draft.key.trim(),
+        languageCode,
+        value,
+        description,
+      });
+      savedAnyValue = true;
+    }
+
+    if (!savedAnyValue) {
+      return;
+    }
+
+    setNewTermDrafts((current) => {
+      const filtered = current.filter((item) => item.id !== draftId);
+      return filtered.length > 0
+        ? filtered
+        : [{ id: crypto.randomUUID(), key: "", description: "", values: {} }];
+    });
+  };
+
+  const savePendingNewTermDrafts = async () => {
+    const pendingDrafts = newTermDrafts.filter((draft) => draft.key.trim().length > 0);
+    if (pendingDrafts.length === 0) {
+      setNewTermDrafts([{ id: crypto.randomUUID(), key: "", description: "", values: {} }]);
+      return;
+    }
+
+    const remainingDrafts: NewTermDraft[] = [];
+
+    for (const draft of pendingDrafts) {
+      const description = draft.description.trim() || undefined;
+      let savedAnyValue = false;
+      for (const languageCode of selectedLanguageCodes) {
+        const value = draft.values[languageCode]?.trim();
+        if (!value) {
+          continue;
+        }
+        await createMutation.mutateAsync({
+          key: draft.key.trim(),
+          languageCode,
+          value,
+          description,
+        });
+        savedAnyValue = true;
+      }
+
+      if (!savedAnyValue) {
+        remainingDrafts.push(draft);
+      }
+    }
+
+    setNewTermDrafts([
+      ...remainingDrafts,
+      { id: crypto.randomUUID(), key: "", description: "", values: {} },
+    ]);
+  };
+
+  const handleTranslationGridBlurCapture = (event: FocusEvent<HTMLDivElement>) => {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+    void savePendingNewTermDrafts();
+  };
 
   return (
     <section className="page">
@@ -371,13 +505,6 @@ export function ProjectPage() {
           </select>
         </label>
         <button
-          className="button primary"
-          disabled={createMutation.isPending || !canCreateTranslation}
-          onClick={() => createMutation.mutate()}
-        >
-          Create translation
-        </button>
-        <button
           className="button secondary"
           disabled={importMutation.isPending || !canImportTranslations}
           onClick={() => importMutation.mutate()}
@@ -398,56 +525,14 @@ export function ProjectPage() {
       {deleteMutation.isError ? (
         <div className="banner error">{buildErrorMessage(deleteMutation.error)}</div>
       ) : null}
-      {addMemberMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(addMemberMutation.error)}</div>
-      ) : null}
-      {removeMemberMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(removeMemberMutation.error)}</div>
-      ) : null}
-      {createLanguageMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(createLanguageMutation.error)}</div>
-      ) : null}
-      {deleteLanguageMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(deleteLanguageMutation.error)}</div>
-      ) : null}
-      {createNamespaceMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(createNamespaceMutation.error)}</div>
-      ) : null}
-      {deleteNamespaceMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(deleteNamespaceMutation.error)}</div>
-      ) : null}
-      {createEnvironmentMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(createEnvironmentMutation.error)}</div>
-      ) : null}
-      {deleteEnvironmentMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(deleteEnvironmentMutation.error)}</div>
-      ) : null}
 
       <div className="workspace-grid">
         <article className="panel stack gap-md">
           <header className="panel-header">
             <h2>Translations</h2>
-            <span className="badge">{translationsQuery.data?.length ?? 0}</span>
+            <span className="badge">{totalTranslationRows}</span>
           </header>
           <div className="stack gap-md">
-            <div className="form-grid">
-              <label className="field">
-                <span>Key</span>
-                <input value={newKey} onChange={(event) => setNewKey(event.target.value)} placeholder="button.save" />
-              </label>
-              <label className="field">
-                <span>Value</span>
-                <input value={newValue} onChange={(event) => setNewValue(event.target.value)} placeholder="Save" />
-              </label>
-            </div>
-            <label className="field">
-              <span>Description</span>
-              <input
-                value={newDescription}
-                onChange={(event) => setNewDescription(event.target.value)}
-                placeholder="Optional description"
-              />
-            </label>
             <label className="field">
               <span>Import JSON</span>
               <textarea
@@ -456,6 +541,56 @@ export function ProjectPage() {
                 onChange={(event) => setImportJson(event.target.value)}
                 rows={7}
               />
+            </label>
+          </div>
+          <div className="translation-toolbar">
+            <label className="field search-field">
+              <span>Search</span>
+              <input
+                value={translationSearch}
+                onChange={(event) => setTranslationSearch(event.target.value)}
+                placeholder="Search key, namespace, description, language, value"
+              />
+            </label>
+            <div className="field language-filter">
+              <span>Visible languages</span>
+              <div className="dropdown-shell">
+                <button
+                  className="button ghost"
+                  onClick={() => setLanguageMenuOpen((current) => !current)}
+                  type="button"
+                >
+                  {selectedLanguageCodes.join(", ") || "Select languages"}
+                </button>
+                {languageMenuOpen ? (
+                  <div className="dropdown-panel">
+                    {languagesQuery.data?.map((item) => (
+                      <label className="dropdown-option" key={item.id}>
+                        <input
+                          checked={selectedLanguageCodes.includes(item.code)}
+                          onChange={() => toggleVisibleLanguage(item.code)}
+                          type="checkbox"
+                        />
+                        <span>{item.code} · {item.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            <label className="field compact-field">
+              <span>Page size</span>
+              <select
+                value={pageSize}
+                onChange={(event) => {
+                  setPageSize(Number(event.target.value));
+                  setPage(1);
+                }}
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
             </label>
           </div>
           {!canReadCurrentEnvironment ? (
@@ -468,82 +603,181 @@ export function ProjectPage() {
             <div className="banner error">{buildErrorMessage(translationsQuery.error)}</div>
           ) : null}
           {translationsQuery.data ? (
-            <div className="table-shell">
+            <>
+            <div
+              className="table-shell translation-grid-shell"
+              onBlurCapture={handleTranslationGridBlurCapture}
+              ref={translationGridRef}
+            >
               <table>
                 <thead>
                   <tr>
+                    <th>Namespace</th>
                     <th>Key</th>
-                    <th>Value</th>
                     <th>Description</th>
-                    <th>Actions</th>
+                    {selectedLanguageCodes.map((languageCode) => (
+                      <th key={languageCode}>{languageCode}</th>
+                    ))}
+                    <th>
+                      <div className="table-actions-header">
+                        <span>Actions</span>
+                        {canCreateTranslation ? (
+                          <button
+                            className="button primary add-row-button"
+                            onClick={addNewTermDraftRow}
+                            type="button"
+                          >
+                            +
+                          </button>
+                        ) : null}
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {translationsQuery.data.map((translation) => (
-                    <tr key={translation.id}>
+                  {canCreateTranslation
+                    ? newTermDrafts.map((draft) => (
+                        <tr className="new-term-row" key={draft.id}>
+                          <td>
+                            <span className="badge subtle">{namespace}</span>
+                          </td>
+                          <td>
+                            <input
+                              className={focusedCell === `new-key:${draft.id}` ? "grid-input is-focused" : "grid-input"}
+                              data-grid-focus="true"
+                              onChange={(event) => updateNewTermDraft(draft.id, "key", event.target.value)}
+                              onFocus={() => setFocusedCell(`new-key:${draft.id}`)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  focusNextGridInput(event.currentTarget);
+                                }
+                              }}
+                              placeholder="button.save"
+                              value={draft.key}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className={focusedCell === `new-desc:${draft.id}` ? "grid-input is-focused" : "grid-input"}
+                              data-grid-focus="true"
+                              onChange={(event) => updateNewTermDraft(draft.id, "description", event.target.value)}
+                              onFocus={() => setFocusedCell(`new-desc:${draft.id}`)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  focusNextGridInput(event.currentTarget);
+                                }
+                              }}
+                              placeholder="Optional description"
+                              value={draft.description}
+                            />
+                          </td>
+                          {selectedLanguageCodes.map((languageCode) => (
+                            <td key={languageCode}>
+                              <input
+                                className={
+                                  focusedCell === `new-value:${draft.id}:${languageCode}`
+                                    ? "grid-input is-focused"
+                                    : "grid-input"
+                                }
+                                data-grid-focus="true"
+                                onChange={(event) => updateNewTermValue(draft.id, languageCode, event.target.value)}
+                                onFocus={() => setFocusedCell(`new-value:${draft.id}:${languageCode}`)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    focusNextGridInput(event.currentTarget);
+                                  }
+                                }}
+                                placeholder={`Value (${languageCode})`}
+                                value={draft.values[languageCode] ?? ""}
+                              />
+                            </td>
+                          ))}
+                          <td>
+                            <button
+                              className="button secondary"
+                              disabled={createMutation.isPending || draft.key.trim().length === 0}
+                              onClick={() => {
+                                void saveNewTermDraft(draft.id);
+                              }}
+                              type="button"
+                            >
+                              Save
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    : null}
+                  {translationRows.map((translation) => (
+                    <tr key={translation.translation_key_id}>
+                      <td>{translation.namespace}</td>
                       <td>{translation.key}</td>
                       <td>
-                        {editingTranslationId === translation.id ? (
-                          <input value={editValue} onChange={(event) => setEditValue(event.target.value)} />
-                        ) : (
-                          translation.value
-                        )}
+                        <input
+                          className={focusedCell === `desc:${translation.translation_key_id}` ? "grid-input is-focused" : "grid-input"}
+                          data-grid-focus="true"
+                          onBlur={() => {
+                            void commitDescription(translation);
+                          }}
+                          onChange={(event) => updateDraftValue(`desc:${translation.translation_key_id}`, event.target.value)}
+                          onFocus={() => setFocusedCell(`desc:${translation.translation_key_id}`)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void commitDescription(translation);
+                              focusNextGridInput(event.currentTarget);
+                            }
+                          }}
+                          placeholder="Optional description"
+                          value={draftValues[`desc:${translation.translation_key_id}`] ?? ""}
+                        />
                       </td>
-                      <td>
-                        {editingTranslationId === translation.id ? (
-                          <input
-                            value={editDescription}
-                            onChange={(event) => setEditDescription(event.target.value)}
-                            placeholder="Optional description"
-                          />
-                        ) : (
-                          translation.description ?? "—"
-                        )}
-                      </td>
+                      {selectedLanguageCodes.map((languageCode) => {
+                        const draftKey = `value:${translation.translation_key_id}:${languageCode}`;
+                        const hasValue = Boolean(translation.values[languageCode]?.id);
+                        return (
+                          <td key={languageCode}>
+                            <input
+                              className={focusedCell === draftKey ? "grid-input is-focused" : "grid-input"}
+                              data-grid-focus="true"
+                              onBlur={() => {
+                                void commitTranslationValue(translation, languageCode);
+                              }}
+                              onChange={(event) => updateDraftValue(draftKey, event.target.value)}
+                              onFocus={() => setFocusedCell(draftKey)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  void commitTranslationValue(translation, languageCode);
+                                  focusNextGridInput(event.currentTarget);
+                                }
+                              }}
+                              placeholder={hasValue ? "" : `Add ${languageCode}`}
+                              value={draftValues[draftKey] ?? ""}
+                            />
+                          </td>
+                        );
+                      })}
                       <td>
                         <div className="action-row">
-                          {editingTranslationId === translation.id ? (
-                            <>
-                              <button
-                                className="button secondary"
-                                disabled={updateMutation.isPending}
-                                onClick={() => updateMutation.mutate()}
-                              >
-                                Save
-                              </button>
-                              <button
-                                className="button ghost"
-                                onClick={() => {
-                                  setEditingTranslationId(null);
-                                  setEditValue("");
-                                  setEditDescription("");
-                                }}
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                className="button secondary"
-                                disabled={!canCreateTranslation}
-                                onClick={() => {
-                                  setEditingTranslationId(translation.id);
-                                  setEditValue(translation.value);
-                                  setEditDescription(translation.description ?? "");
-                                }}
-                              >
-                                Edit
-                              </button>
-                              <button
-                                className="button ghost danger"
-                                disabled={deleteMutation.isPending || !canDeleteTranslation}
-                                onClick={() => deleteMutation.mutate(translation.id)}
-                              >
-                                Delete
-                              </button>
-                            </>
-                          )}
+                          <button
+                            className="button ghost danger"
+                            disabled={
+                              deleteMutation.isPending ||
+                              !canDeleteTranslation ||
+                              !translation.values[language]?.id
+                            }
+                            onClick={() => {
+                              const translationId = translation.values[language]?.id;
+                              if (translationId) {
+                                deleteMutation.mutate(translationId);
+                              }
+                            }}
+                          >
+                            Delete {language}
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -551,275 +785,48 @@ export function ProjectPage() {
                 </tbody>
               </table>
             </div>
+            <div className="pagination-bar">
+              <span className="muted">
+                Page {page} of {totalPages} · {totalTranslationRows} terms
+              </span>
+              <div className="action-row">
+                <button
+                  className="button ghost"
+                  disabled={page <= 1}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  Previous
+                </button>
+                <button
+                  className="button ghost"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+            </>
           ) : null}
         </article>
 
-        <article className="panel stack gap-md">
-          <header className="panel-header">
-            <h2>Project controls</h2>
-          </header>
-          <MetaRow label="Languages" value={String(languagesQuery.data?.length ?? 0)} />
-          <MetaRow label="Namespaces" value={String(namespacesQuery.data?.length ?? 0)} />
-          <MetaRow label="Environments" value={String(environmentsQuery.data?.length ?? 0)} />
-          <MetaRow label="Current environment" value={environment || "—"} />
-          <MetaRow label="Current language" value={language || "—"} />
+        <ProjectDeliveryLinksPanel
+          projectSlug={project.slug}
+          environment={environment}
+          language={language}
+          languagesCount={languagesQuery.data?.length ?? 0}
+          namespacesCount={namespacesQuery.data?.length ?? 0}
+          environmentsCount={environmentsQuery.data?.length ?? 0}
+        />
+
+        <article className="panel">
+          <ProjectResourcesPanel projectSlug={project.slug} canEditProject={canEditProject} />
+          
           <div className="divider" />
-          <div className="stack gap-md">
-            <header className="panel-header">
-              <h2>Delivery links</h2>
-            </header>
-            {localeBundleHref ? (
-              <div className="link-card">
-                <strong>Locale bundle</strong>
-                <a className="project-link" href={localeBundleHref} rel="noreferrer" target="_blank">
-                  {localeBundleHref}
-                </a>
-              </div>
-            ) : (
-              <p className="muted">Select environment and language to view delivery URLs.</p>
-            )}
-            {namespaceJsonLinks.length > 0 ? (
-              <div className="link-list">
-                {namespaceJsonLinks.map((item) => (
-                  <div className="link-card" key={item.id}>
-                    <strong>{item.name}.json</strong>
-                    <a className="project-link" href={item.href} rel="noreferrer" target="_blank">
-                      {item.href}
-                    </a>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          <div className="divider" />
-          <div className="stack gap-md">
-            <header className="panel-header">
-              <h2>Languages</h2>
-            </header>
-            <div className="form-grid">
-              <label className="field">
-                <span>Code</span>
-                <input value={newLanguageCode} onChange={(event) => setNewLanguageCode(event.target.value)} placeholder="en" />
-              </label>
-              <label className="field">
-                <span>Name</span>
-                <input value={newLanguageName} onChange={(event) => setNewLanguageName(event.target.value)} placeholder="English" />
-              </label>
-            </div>
-            <button
-              className="button secondary"
-              disabled={createLanguageMutation.isPending || !canEditProject}
-              onClick={() => createLanguageMutation.mutate()}
-            >
-              Add language
-            </button>
-            {languagesQuery.data?.map((item) => (
-              <div className="member-card" key={item.id}>
-                <div className="stack gap-sm">
-                  <strong>{item.code}</strong>
-                  <span className="muted">{item.name}</span>
-                </div>
-                <button
-                  className="button ghost danger"
-                  disabled={deleteLanguageMutation.isPending || !canEditProject}
-                  onClick={() => deleteLanguageMutation.mutate(item.code)}
-                >
-                  Delete
-                </button>
-              </div>
-            ))}
-          </div>
-          <div className="divider" />
-          <div className="stack gap-md">
-            <header className="panel-header">
-              <h2>Namespaces</h2>
-            </header>
-            <label className="field">
-              <span>Name</span>
-              <input value={newNamespaceName} onChange={(event) => setNewNamespaceName(event.target.value)} placeholder="common" />
-            </label>
-            <button
-              className="button secondary"
-              disabled={createNamespaceMutation.isPending || !canEditProject}
-              onClick={() => createNamespaceMutation.mutate()}
-            >
-              Add namespace
-            </button>
-            {namespacesQuery.data?.map((item) => (
-              <div className="member-card" key={item.id}>
-                <div className="stack gap-sm">
-                  <strong>{item.name}</strong>
-                </div>
-                <button
-                  className="button ghost danger"
-                  disabled={deleteNamespaceMutation.isPending || !canEditProject}
-                  onClick={() => deleteNamespaceMutation.mutate(item.name)}
-                >
-                  Delete
-                </button>
-              </div>
-            ))}
-          </div>
-          <div className="divider" />
-          <div className="stack gap-md">
-            <header className="panel-header">
-              <h2>Environments</h2>
-            </header>
-            <div className="form-grid">
-              <label className="field">
-                <span>Name</span>
-                <input value={newEnvironmentName} onChange={(event) => setNewEnvironmentName(event.target.value)} placeholder="Production" />
-              </label>
-              <label className="field">
-                <span>Slug</span>
-                <input value={newEnvironmentSlug} onChange={(event) => setNewEnvironmentSlug(event.target.value)} placeholder="production" />
-              </label>
-            </div>
-            <button
-              className="button secondary"
-              disabled={createEnvironmentMutation.isPending || !canEditProject}
-              onClick={() => createEnvironmentMutation.mutate()}
-            >
-              Add environment
-            </button>
-            {environmentsQuery.data?.map((item) => (
-              <div className="member-card" key={item.id}>
-                <div className="stack gap-sm">
-                  <strong>{item.name}</strong>
-                  <span className="muted">{item.slug}</span>
-                </div>
-                <button
-                  className="button ghost danger"
-                  disabled={deleteEnvironmentMutation.isPending || !canEditProject}
-                  onClick={() => deleteEnvironmentMutation.mutate(item.slug)}
-                >
-                  Delete
-                </button>
-              </div>
-            ))}
-          </div>
-          <div className="divider" />
-          <div className="stack gap-md">
-            <header className="panel-header">
-              <h2>Members</h2>
-              <span className="badge">{membersQuery.data?.length ?? 0}</span>
-            </header>
-            <label className="field">
-              <span>Add member by user ID</span>
-              <input
-                value={memberUserId}
-                onChange={(event) => setMemberUserId(event.target.value)}
-                placeholder="Paste user id"
-              />
-            </label>
-            <button
-              className="button secondary"
-              disabled={addMemberMutation.isPending || !canManageMembers}
-              onClick={() => addMemberMutation.mutate()}
-            >
-              Add member
-            </button>
-            {membersQuery.isLoading ? <p className="muted">Loading members...</p> : null}
-            {membersQuery.isError ? (
-              <div className="banner error">{buildErrorMessage(membersQuery.error)}</div>
-            ) : null}
-            {membersQuery.data?.map((member) => (
-              <div className="member-card" key={member.id}>
-                <div className="stack gap-sm">
-                  <strong>{member.display_name}</strong>
-                  <span className="muted">{member.email}</span>
-                  <span className="badge subtle">{member.is_owner ? "Owner" : member.is_active ? "Active" : "Inactive"}</span>
-                </div>
-                {!member.is_owner ? (
-                  <button
-                    className="button ghost danger"
-                    disabled={removeMemberMutation.isPending || !canManageMembers}
-                    onClick={() => removeMemberMutation.mutate(member.id)}
-                  >
-                    Remove
-                  </button>
-                ) : null}
-              </div>
-            ))}
-          </div>
+          <ProjectMembersPanel projectSlug={project.slug} canManageMembers={canManageMembers} canViewMembers={canViewMembers} />
 
           <div className="divider" />
-          <div className="stack gap-md">
-            <header className="panel-header">
-              <h2>Project settings</h2>
-            </header>
-            {updateProjectMutation.isError ? (
-              <div className="banner error">{buildErrorMessage(updateProjectMutation.error)}</div>
-            ) : null}
-            {deleteProjectMutation.isError ? (
-              <div className="banner error">{buildErrorMessage(deleteProjectMutation.error)}</div>
-            ) : null}
-            
-            {isEditingProject ? (
-              <div className="stack gap-md">
-                <div className="form-grid">
-                  <label className="field">
-                    <span>Name</span>
-                    <input value={editProjectName} onChange={(e) => setEditProjectName(e.target.value)} />
-                  </label>
-                  <label className="field">
-                    <span>Slug</span>
-                    <input value={editProjectSlug} onChange={(e) => setEditProjectSlug(e.target.value)} />
-                  </label>
-                </div>
-                <label className="field">
-                  <span>Description</span>
-                  <textarea
-                    className="textarea"
-                    rows={3}
-                    value={editProjectDescription}
-                    onChange={(e) => setEditProjectDescription(e.target.value)}
-                  />
-                </label>
-                <div className="action-row">
-                  <button
-                    className="button primary"
-                    disabled={updateProjectMutation.isPending}
-                    onClick={() => updateProjectMutation.mutate()}
-                  >
-                    Save changes
-                  </button>
-                  <button className="button ghost" onClick={() => setIsEditingProject(false)}>
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="stack gap-sm">
-                <p className="muted">Modify project details or permanently delete this project.</p>
-                <div className="action-row">
-                  <button
-                    className="button secondary"
-                    disabled={!canEditProject}
-                    onClick={() => {
-                      setEditProjectName(project.name);
-                      setEditProjectSlug(project.slug);
-                      setEditProjectDescription(project.description ?? "");
-                      setIsEditingProject(true);
-                    }}
-                  >
-                    Edit project
-                  </button>
-                  <button
-                    className="button ghost danger"
-                    disabled={deleteProjectMutation.isPending || !canDeleteProject}
-                    onClick={() => {
-                      if (window.confirm("Are you sure you want to delete this project? This action cannot be undone.")) {
-                        deleteProjectMutation.mutate();
-                      }
-                    }}
-                  >
-                    Delete project
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+          <ProjectSettingsPanel project={project} canEditProject={canEditProject} canDeleteProject={canDeleteProject} />
         </article>
       </div>
     </section>

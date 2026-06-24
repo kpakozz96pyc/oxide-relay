@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
+use sqlx::{FromRow, QueryBuilder, Sqlite, SqlitePool, Transaction};
 use uuid::Uuid;
 
 use crate::{
@@ -66,6 +66,30 @@ pub struct ImportEntry<'a> {
     pub value: &'a str,
 }
 
+#[derive(Debug)]
+pub struct TranslationGridValueRecord {
+    pub id: Option<String>,
+    pub value: String,
+}
+
+#[derive(Debug)]
+pub struct TranslationGridRowRecord {
+    pub representative_translation_id: String,
+    pub translation_key_id: String,
+    pub key: String,
+    pub description: Option<String>,
+    pub namespace: String,
+    pub values: BTreeMap<String, TranslationGridValueRecord>,
+}
+
+#[derive(Debug)]
+pub struct TranslationGridPageRecord {
+    pub items: Vec<TranslationGridRowRecord>,
+    pub total: usize,
+    pub page: usize,
+    pub page_size: usize,
+}
+
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
@@ -110,6 +134,186 @@ pub async fn list(
     .fetch_all(pool)
     .await
     .map_err(|e| ApiError::from_sqlx(e, "Unable to list translations."))
+}
+
+pub async fn list_grid(
+    pool: &SqlitePool,
+    project_id: &str,
+    environment_slug: &str,
+    namespace_name: Option<&str>,
+    search: Option<&str>,
+    language_codes: &[String],
+    page: usize,
+    page_size: usize,
+) -> AppResult<TranslationGridPageRecord> {
+    #[derive(Debug, FromRow)]
+    struct GridBaseRow {
+        representative_translation_id: String,
+        translation_key_id: String,
+        key: String,
+        description: Option<String>,
+        namespace: String,
+    }
+
+    #[derive(Debug, FromRow)]
+    struct GridValueRow {
+        id: String,
+        translation_key_id: String,
+        language_code: String,
+        value: String,
+    }
+
+    let page = page.max(1);
+    let page_size = page_size.clamp(1, 100);
+    let offset = (page - 1) * page_size;
+    let search_pattern = search
+        .and_then(|value| optional_trimmed(Some(value)))
+        .map(|value| format!("%{value}%"));
+
+    let mut count_query = QueryBuilder::<Sqlite>::new(
+        r#"
+        SELECT COUNT(DISTINCT tk.id)
+        FROM translation_keys tk
+        JOIN namespaces n ON n.id = tk.namespace_id
+        JOIN translation_values tv ON tv.translation_key_id = tk.id
+        JOIN environments e ON e.id = tv.environment_id
+        LEFT JOIN languages l ON l.id = tv.language_id
+        WHERE tk.project_id = 
+        "#,
+    );
+    count_query.push_bind(project_id);
+    count_query.push(" AND e.slug = ");
+    count_query.push_bind(environment_slug);
+    append_grid_filters(&mut count_query, namespace_name, search_pattern.as_deref());
+
+    let total = count_query
+        .build_query_scalar::<i64>()
+        .fetch_one(pool)
+        .await
+        .map_err(|e| ApiError::from_sqlx(e, "Unable to count translation rows."))?
+        .max(0) as usize;
+
+    let mut rows_query = QueryBuilder::<Sqlite>::new(
+        r#"
+        SELECT
+            MIN(tv.id) AS representative_translation_id,
+            tk.id AS translation_key_id,
+            tk.key,
+            tk.description,
+            n.name AS namespace
+        FROM translation_keys tk
+        JOIN namespaces n ON n.id = tk.namespace_id
+        JOIN translation_values tv ON tv.translation_key_id = tk.id
+        JOIN environments e ON e.id = tv.environment_id
+        LEFT JOIN languages l ON l.id = tv.language_id
+        WHERE tk.project_id =
+        "#,
+    );
+    rows_query.push_bind(project_id);
+    rows_query.push(" AND e.slug = ");
+    rows_query.push_bind(environment_slug);
+    append_grid_filters(&mut rows_query, namespace_name, search_pattern.as_deref());
+    rows_query.push(
+        r#"
+        GROUP BY tk.id, tk.key, tk.description, n.name
+        ORDER BY n.name, tk.key
+        LIMIT
+        "#,
+    );
+    rows_query.push_bind(page_size as i64);
+    rows_query.push(" OFFSET ");
+    rows_query.push_bind(offset as i64);
+
+    let base_rows = rows_query
+        .build_query_as::<GridBaseRow>()
+        .fetch_all(pool)
+        .await
+        .map_err(|e| ApiError::from_sqlx(e, "Unable to list translation rows."))?;
+
+    if base_rows.is_empty() {
+        return Ok(TranslationGridPageRecord {
+            items: Vec::new(),
+            total,
+            page,
+            page_size,
+        });
+    }
+
+    let translation_key_ids: Vec<String> = base_rows
+        .iter()
+        .map(|row| row.translation_key_id.clone())
+        .collect();
+
+    let mut values_query = QueryBuilder::<Sqlite>::new(
+        r#"
+        SELECT
+            tv.id,
+            tv.translation_key_id,
+            l.code AS language_code,
+            tv.value
+        FROM translation_values tv
+        JOIN languages l ON l.id = tv.language_id
+        JOIN environments e ON e.id = tv.environment_id
+        WHERE e.slug =
+        "#,
+    );
+    values_query.push_bind(environment_slug);
+    values_query.push(" AND tv.translation_key_id IN (");
+    {
+        let mut separated = values_query.separated(", ");
+        for translation_key_id in &translation_key_ids {
+            separated.push_bind(translation_key_id);
+        }
+    }
+    values_query.push(")");
+    if !language_codes.is_empty() {
+        values_query.push(" AND l.code IN (");
+        let mut separated = values_query.separated(", ");
+        for language_code in language_codes {
+            separated.push_bind(language_code);
+        }
+        values_query.push(")");
+    }
+    values_query.push(" ORDER BY l.code");
+
+    let value_rows = values_query
+        .build_query_as::<GridValueRow>()
+        .fetch_all(pool)
+        .await
+        .map_err(|e| ApiError::from_sqlx(e, "Unable to load translation grid values."))?;
+
+    let mut values_by_key = BTreeMap::<String, BTreeMap<String, TranslationGridValueRecord>>::new();
+    for value_row in value_rows {
+        values_by_key
+            .entry(value_row.translation_key_id)
+            .or_default()
+            .insert(
+                value_row.language_code,
+                TranslationGridValueRecord {
+                    id: Some(value_row.id),
+                    value: value_row.value,
+                },
+            );
+    }
+
+    let items = base_rows
+        .into_iter()
+        .map(|row| TranslationGridRowRecord {
+            representative_translation_id: row.representative_translation_id,
+            translation_key_id: row.translation_key_id.clone(),
+            key: row.key,
+            description: row.description,
+            namespace: row.namespace,
+            values: values_by_key.remove(&row.translation_key_id).unwrap_or_default(),
+        })
+        .collect();
+
+    Ok(TranslationGridPageRecord {
+        items,
+        total,
+        page,
+        page_size,
+    })
 }
 
 pub async fn create(
@@ -178,6 +382,7 @@ pub async fn create(
     Ok(record)
 }
 
+
 pub async fn update(
     pool: &SqlitePool,
     project_id: &str,
@@ -243,11 +448,38 @@ pub async fn update(
 }
 
 pub async fn delete(pool: &SqlitePool, translation_value_id: &str) -> AppResult<()> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| ApiError::from_sqlx(e, "Unable to start transaction."))?;
+
+    let key_id: Option<String> = sqlx::query_scalar(
+        "SELECT translation_key_id FROM translation_values WHERE id = ?1"
+    )
+    .bind(translation_value_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to load translation."))?;
+
     sqlx::query("DELETE FROM translation_values WHERE id = ?1")
         .bind(translation_value_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| ApiError::from_sqlx(e, "Unable to delete the translation."))?;
+
+    if let Some(kid) = key_id {
+        sqlx::query(
+            "DELETE FROM translation_keys WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM translation_values WHERE translation_key_id = ?1)"
+        )
+        .bind(kid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ApiError::from_sqlx(e, "Unable to clean up orphaned translation key."))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|e| ApiError::from_sqlx(e, "Unable to commit transaction."))?;
 
     Ok(())
 }
@@ -529,4 +761,34 @@ async fn find_or_create_key(
     .map_err(|e| ApiError::from_sqlx(e, "Translation key already exists."))?;
 
     Ok(id)
+}
+
+fn append_grid_filters<'a>(
+    query: &mut QueryBuilder<'a, Sqlite>,
+    namespace_name: Option<&'a str>,
+    search_pattern: Option<&'a str>,
+) {
+    if let Some(namespace_name) = namespace_name {
+        query.push(" AND n.name = ");
+        query.push_bind(namespace_name);
+    }
+
+    if let Some(search_pattern) = search_pattern {
+        query.push(
+            r#"
+            AND (
+                tk.key LIKE
+            "#,
+        );
+        query.push_bind(search_pattern);
+        query.push(" OR COALESCE(tk.description, '') LIKE ");
+        query.push_bind(search_pattern);
+        query.push(" OR n.name LIKE ");
+        query.push_bind(search_pattern);
+        query.push(" OR l.code LIKE ");
+        query.push_bind(search_pattern);
+        query.push(" OR COALESCE(tv.value, '') LIKE ");
+        query.push_bind(search_pattern);
+        query.push(")");
+    }
 }

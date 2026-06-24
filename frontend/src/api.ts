@@ -69,6 +69,27 @@ export type Translation = {
   updated_at: string;
 };
 
+export type TranslationGridValue = {
+  id: string | null;
+  value: string;
+};
+
+export type TranslationGridRow = {
+  representative_translation_id: string;
+  translation_key_id: string;
+  key: string;
+  description: string | null;
+  namespace: string;
+  values: Record<string, TranslationGridValue>;
+};
+
+export type TranslationGridResponse = {
+  items: TranslationGridRow[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
 export type ProjectMember = {
   id: string;
   email: string;

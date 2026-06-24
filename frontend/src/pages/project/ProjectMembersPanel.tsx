@@ -1,0 +1,97 @@
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiGet, apiPost, apiDelete, buildErrorMessage, ProjectMember } from "../../api";
+
+export function ProjectMembersPanel({
+  projectSlug,
+  canManageMembers,
+  canViewMembers,
+}: {
+  projectSlug: string;
+  canManageMembers: boolean;
+  canViewMembers: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [memberUserId, setMemberUserId] = useState("");
+
+  const membersQuery = useQuery({
+    queryKey: ["project", projectSlug, "members"],
+    queryFn: () => apiGet<ProjectMember[]>(`/api/v1/projects/${projectSlug}/members`),
+    enabled: Boolean(projectSlug) && canViewMembers,
+  });
+
+  const addMemberMutation = useMutation({
+    mutationFn: async () =>
+      apiPost(`/api/v1/projects/${projectSlug}/members`, {
+        user_id: memberUserId,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "members"] });
+      setMemberUserId("");
+    },
+  });
+
+  const removeMemberMutation = useMutation({
+    mutationFn: async (userId: string) =>
+      apiDelete(`/api/v1/projects/${projectSlug}/members/${userId}`),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "members"] });
+    },
+  });
+
+  if (!canViewMembers) return null;
+
+  return (
+    <div className="stack gap-md">
+      <header className="panel-header">
+        <h2>Members</h2>
+        <span className="badge">{membersQuery.data?.length ?? 0}</span>
+      </header>
+      <label className="field">
+        <span>Add member by user ID</span>
+        <input
+          value={memberUserId}
+          onChange={(event) => setMemberUserId(event.target.value)}
+          placeholder="Paste user id"
+        />
+      </label>
+      <button
+        className="button secondary"
+        disabled={addMemberMutation.isPending || !canManageMembers || !memberUserId.trim()}
+        onClick={() => addMemberMutation.mutate()}
+      >
+        Add member
+      </button>
+      {membersQuery.isLoading ? <p className="muted">Loading members...</p> : null}
+      {membersQuery.isError ? (
+        <div className="banner error">{buildErrorMessage(membersQuery.error)}</div>
+      ) : null}
+      {addMemberMutation.isError ? (
+        <div className="banner error">{buildErrorMessage(addMemberMutation.error)}</div>
+      ) : null}
+      {removeMemberMutation.isError ? (
+        <div className="banner error">{buildErrorMessage(removeMemberMutation.error)}</div>
+      ) : null}
+      {membersQuery.data?.map((member) => (
+        <div className="member-card" key={member.id}>
+          <div className="stack gap-sm">
+            <strong>{member.display_name}</strong>
+            <span className="muted">{member.email}</span>
+            <span className="badge subtle">
+              {member.is_owner ? "Owner" : member.is_active ? "Active" : "Inactive"}
+            </span>
+          </div>
+          {!member.is_owner ? (
+            <button
+              className="button ghost danger"
+              disabled={removeMemberMutation.isPending || !canManageMembers}
+              onClick={() => removeMemberMutation.mutate(member.id)}
+            >
+              Remove
+            </button>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}

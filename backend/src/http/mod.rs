@@ -15,7 +15,10 @@ use axum::{
 use serde::Serialize;
 use std::path::PathBuf;
 use tower::util::ServiceExt;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::{
+    services::{ServeDir, ServeFile},
+    trace::TraceLayer,
+};
 
 use crate::{app::AppState, auth};
 
@@ -87,6 +90,10 @@ pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
             get(translations::list_translations).post(translations::create_translation),
         )
         .route(
+            "/api/v1/projects/{project_slug}/translations/grid",
+            get(translations::list_translation_grid),
+        )
+        .route(
             "/api/v1/projects/{project_slug}/translations/{translation_value_id}",
             put(translations::update_translation).delete(translations::delete_translation),
         )
@@ -110,6 +117,7 @@ pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
             "/static/{project_slug}/{environment_slug}/{language_code}/{*namespace_file}",
             get(delivery::static_namespace_file),
         )
+        .layer(TraceLayer::new_for_http())
         .with_state(state);
 
     if frontend_dist_path.join("index.html").is_file() {

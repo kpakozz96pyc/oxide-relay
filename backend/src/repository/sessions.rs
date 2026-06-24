@@ -41,3 +41,15 @@ pub async fn delete_session(pool: &SqlitePool, session_id: &str) -> AppResult<()
 
     Ok(())
 }
+
+/// Removes all sessions that have expired. Called opportunistically during login.
+pub async fn purge_expired(pool: &SqlitePool) -> AppResult<u64> {
+    let now = now_utc()?;
+    let result = sqlx::query("DELETE FROM sessions WHERE expires_at < ?1")
+        .bind(&now)
+        .execute(pool)
+        .await
+        .map_err(|error| ApiError::from_sqlx(error, "Unable to purge expired sessions."))?;
+
+    Ok(result.rows_affected())
+}

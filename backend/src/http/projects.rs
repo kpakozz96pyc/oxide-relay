@@ -11,7 +11,7 @@ use crate::{
     auth::{self, AuthenticatedUser},
     errors::{ApiError, AppResult},
     repository::projects,
-    util::optional_trimmed,
+    util::{optional_trimmed, validate_max_length},
 };
 
 // ---------------------------------------------------------------------------
@@ -340,6 +340,7 @@ fn validate_project_name(value: &str) -> AppResult<()> {
     if value.trim().is_empty() {
         return Err(ApiError::validation("Project name is required."));
     }
+    validate_max_length(value, 200, "Project name")?;
     Ok(())
 }
 
@@ -347,6 +348,7 @@ fn validate_project_slug(value: &str) -> AppResult<()> {
     if value.trim().is_empty() {
         return Err(ApiError::validation("Project slug is required."));
     }
+    validate_max_length(value, 100, "Project slug")?;
     Ok(())
 }
 

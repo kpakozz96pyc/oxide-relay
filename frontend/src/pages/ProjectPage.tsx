@@ -34,6 +34,23 @@ type NewTermDraft = {
   values: Record<string, string>;
 };
 
+function createDraftId(): string {
+  if (typeof crypto !== "undefined") {
+    if (typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    if (typeof crypto.getRandomValues === "function") {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+  }
+
+  return `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 export function ProjectPage() {
   const { projectSlug = "" } = useParams();
   const navigate = useNavigate();
@@ -59,7 +76,7 @@ export function ProjectPage() {
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [focusedCell, setFocusedCell] = useState<string | null>(null);
   const [newTermDrafts, setNewTermDrafts] = useState<NewTermDraft[]>([
-    { id: crypto.randomUUID(), key: "", description: "", values: {} },
+    { id: createDraftId(), key: "", description: "", values: {} },
   ]);
   const deferredTranslationSearch = useDeferredValue(translationSearch.trim());
   const queryClient = useQueryClient();
@@ -376,7 +393,7 @@ export function ProjectPage() {
   const addNewTermDraftRow = () => {
     setNewTermDrafts((current) => [
       ...current,
-      { id: crypto.randomUUID(), key: "", description: "", values: {} },
+      { id: createDraftId(), key: "", description: "", values: {} },
     ]);
   };
 
@@ -411,14 +428,14 @@ export function ProjectPage() {
       const filtered = current.filter((item) => item.id !== draftId);
       return filtered.length > 0
         ? filtered
-        : [{ id: crypto.randomUUID(), key: "", description: "", values: {} }];
+        : [{ id: createDraftId(), key: "", description: "", values: {} }];
     });
   };
 
   const savePendingNewTermDrafts = async () => {
     const pendingDrafts = newTermDrafts.filter((draft) => draft.key.trim().length > 0);
     if (pendingDrafts.length === 0) {
-      setNewTermDrafts([{ id: crypto.randomUUID(), key: "", description: "", values: {} }]);
+      setNewTermDrafts([{ id: createDraftId(), key: "", description: "", values: {} }]);
       return;
     }
 
@@ -448,7 +465,7 @@ export function ProjectPage() {
 
     setNewTermDrafts([
       ...remainingDrafts,
-      { id: crypto.randomUUID(), key: "", description: "", values: {} },
+      { id: createDraftId(), key: "", description: "", values: {} },
     ]);
   };
 

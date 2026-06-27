@@ -385,6 +385,8 @@ docker compose up -d
 
 Use this mode for the simplest installation path. Configuration comes from `.env`,
 and SQLite data is stored in the `oxiderelay-data` volume.
+If port `8080` is already busy on the host, change `OXIDERELAY_PUBLISHED_PORT`
+in `.env` without changing the in-container application port.
 
 ### 5. Docker From Source Mode
 
@@ -511,7 +513,7 @@ docker compose up -d
 ```
 
 The default [compose.yaml](compose.yaml) uses the published image
-`ghcr.io/oxiderelay/oxiderelay:latest`, stores SQLite data in the `oxiderelay-data`
+`kpakozz96pyc/oxiderelay:latest`, stores SQLite data in the `oxiderelay-data`
 volume, and reads runtime settings from `.env`.
 
 For predictable upgrades, replace `OXIDERELAY_IMAGE=...:latest` in `.env` with a release tag.

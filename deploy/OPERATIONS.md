@@ -45,6 +45,10 @@ cp .env.example .env
 docker compose up -d
 ```
 
+If port `8080` is already in use on the host, change `OXIDERELAY_PUBLISHED_PORT`
+in `.env`. Keep `OXIDERELAY_PORT=8080` so the application inside the container
+continues listening on its default port.
+
 Source build:
 
 ```bash

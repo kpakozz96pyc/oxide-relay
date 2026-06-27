@@ -1,12 +1,12 @@
 services:
   oxiderelay:
-    image: ${OXIDERELAY_IMAGE:-ghcr.io/oxiderelay/oxiderelay:latest}
+    image: ${OXIDERELAY_IMAGE:-kpakozz96pyc/oxiderelay:latest}
     container_name: oxiderelay
     restart: unless-stopped
     env_file:
       - .env
     ports:
-      - "${OXIDERELAY_PORT:-8080}:8080"
+      - "${OXIDERELAY_PUBLISHED_PORT:-8080}:8080"
     volumes:
       - oxiderelay-data:/data
 

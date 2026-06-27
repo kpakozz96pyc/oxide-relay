@@ -38,7 +38,14 @@ HTTPS production:  cookie_secure=true
 
 ## Docker Run
 
-Build:
+Preferred install path:
+
+```bash
+cp .env.example .env
+docker compose up -d
+```
+
+Source build:
 
 ```bash
 docker build -f deploy/Dockerfile -t oxiderelay:latest .
@@ -49,13 +56,8 @@ Run with persisted SQLite storage:
 ```bash
 docker run \
   --name oxiderelay \
+  --env-file .env \
   -p 8080:8080 \
-  -e OXIDERELAY_HOST=0.0.0.0 \
-  -e OXIDERELAY_PORT=8080 \
-  -e OXIDERELAY_DATABASE_PATH=/data/oxiderelay.sqlite \
-  -e OXIDERELAY_FRONTEND_DIST_PATH=/app/frontend-dist \
-  -e OXIDERELAY_ADMIN_EMAIL=admin@example.com \
-  -e OXIDERELAY_ADMIN_PASSWORD=change-me \
   -v oxiderelay-data:/data \
   oxiderelay:latest
 ```

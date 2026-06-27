@@ -284,6 +284,7 @@ Supported runtime settings:
 OXIDERELAY_HOST
 OXIDERELAY_PORT
 OXIDERELAY_DATABASE_PATH
+OXIDERELAY_FRONTEND_DIST_PATH
 OXIDERELAY_SESSION_COOKIE_NAME
 OXIDERELAY_SESSION_TTL_HOURS
 OXIDERELAY_SESSION_COOKIE_SECURE
@@ -307,38 +308,118 @@ For HTTPS deployments, set `OXIDERELAY_SESSION_COOKIE_SECURE=true`.
 
 # Local Startup
 
-Development backend:
+Quick local development:
 
 ```bash
 cargo run -p oxiderelay-backend -- --config backend/config.toml.example
 ```
 
-Development frontend:
-
 ```bash
 cd frontend
+npm install
 npm run dev
 ```
 
 The Vite dev server proxies `/api` and `/static` to the backend on `127.0.0.1:8080`.
+For all supported launch modes, including production-style local startup, native binary,
+Docker Compose, and Docker from source, see the `Run Modes` section below.
 
-Production-style single-process startup:
+## Run Modes
+
+OxideRelay supports several launch modes depending on whether you are developing,
+testing a production-like setup, or installing the service for regular use.
+
+### 1. Development Mode
+
+Run the backend and frontend separately:
+
+```bash
+cargo run -p oxiderelay-backend -- --config backend/config.toml.example
+```
 
 ```bash
 cd frontend
+npm install
+npm run dev
+```
+
+Use this mode when changing frontend or backend code. The Vite development server
+proxies `/api` and `/static` to the backend.
+
+### 2. Production-Style Local Mode
+
+Build the frontend first, then let the backend serve both the UI and API:
+
+```bash
+cd frontend
+npm install
 npm run build
 cd ..
 
 cargo run -p oxiderelay-backend -- --config backend/config.toml.example
 ```
 
-With a built frontend bundle in `./frontend/dist`, the backend serves:
+Use this mode to validate behavior close to production without Docker.
+
+### 3. Native Binary Mode
+
+Build and run the release binary directly:
+
+```bash
+cd frontend && npm run build && cd ..
+cargo build --release -p oxiderelay-backend
+./target/release/oxiderelay-backend
+```
+
+By default, the backend looks for the frontend bundle in `./frontend/dist`.
+Override this path with `OXIDERELAY_FRONTEND_DIST_PATH` if needed.
+
+### 4. Docker Compose Mode
+
+Use the published container image with the provided Compose configuration:
+
+```bash
+cp .env.example .env
+docker compose up -d
+```
+
+Use this mode for the simplest installation path. Configuration comes from `.env`,
+and SQLite data is stored in the `oxiderelay-data` volume.
+
+### 5. Docker From Source Mode
+
+Build a local image from the current repository checkout:
+
+```bash
+docker build -f deploy/Dockerfile -t oxiderelay:latest .
+docker run -d \
+  --name oxiderelay \
+  --env-file .env \
+  -p 8080:8080 \
+  -v oxiderelay-data:/data \
+  oxiderelay:latest
+```
+
+Use this mode when you want the container to run your local source changes rather
+than a published registry image.
+
+### 6. First Start With an Empty Database
+
+When the database is empty, the service requires bootstrap administrator credentials:
 
 ```text
-/      -> frontend SPA
-/api   -> backend API
-/static -> public translation JSON delivery
+OXIDERELAY_ADMIN_EMAIL
+OXIDERELAY_ADMIN_PASSWORD
 ```
+
+These settings are required only for the first successful startup with an empty
+`users` table.
+
+### 7. Restart With an Existing Database
+
+When the SQLite database already contains users, the service starts without
+bootstrap admin variables. In that mode, preserving the `/data` volume or the
+SQLite files is the important part.
 
 ---
 
@@ -422,31 +503,21 @@ Unversioned static URLs still work and use short TTL plus revalidation headers.
 
 OxideRelay is designed for simple installation and operation.
 
-## Docker
+The recommended install path is Docker Compose:
 
 ```bash
-docker run -d \
-  --name oxiderelay \
-  -p 8080:8080 \
-  -e OXIDERELAY_ADMIN_EMAIL=admin@example.com \
-  -e OXIDERELAY_ADMIN_PASSWORD=change-me \
-  -v oxiderelay_data:/data \
-  ghcr.io/oxiderelay/oxiderelay:latest
+cp .env.example .env
+docker compose up -d
 ```
+
+The default [compose.yaml](compose.yaml) uses the published image
+`ghcr.io/oxiderelay/oxiderelay:latest`, stores SQLite data in the `oxiderelay-data`
+volume, and reads runtime settings from `.env`.
+
+For predictable upgrades, replace `OXIDERELAY_IMAGE=...:latest` in `.env` with a release tag.
 
 The container serves both the admin UI at `/` and the API at `/api`.
-
-## Native Binary
-
-```bash
-cd frontend && npm run build && cd ..
-./oxiderelay
-```
-
-If the frontend bundle is available in `./frontend/dist` or the path configured via
-`OXIDERELAY_FRONTEND_DIST_PATH`, the backend serves it from `/`.
-
-By default, OxideRelay uses an embedded SQLite database.
+Alternative installation and launch options are documented above in `Run Modes`.
 
 ---
 

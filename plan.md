@@ -23,11 +23,11 @@
 
 ### Task 1.3: Configure frontend foundation
 - Initialize React + TypeScript + Vite application.
-- Add React Router, TanStack Query, React Hook Form, MUI, and MUI DataGrid Community.
+- Add React Router, TanStack Query, and the shared frontend API/auth foundations used by the admin UI.
 - Create base layout, routing shell, API client layer, and auth state handling.
 
 ### Task 1.4: Establish developer workflow
-- Add commands for local run, build, lint, and test.
+- Add commands for local run, build, and test.
 - Add Dockerfile and local development run instructions.
 - Document startup flow for the backend and frontend.
 
@@ -173,7 +173,7 @@
 - Make the endpoint public in MVP.
 - Return one namespace per file.
 - Return keys without namespace prefix.
-- Apply `Cache-Control: public, max-age=300`.
+- Apply short revalidation caching for unversioned URLs and immutable caching for versioned URLs.
 
 ### Task 7.3: Optimize delivery queries
 - Add efficient lookup queries using the planned indexes.

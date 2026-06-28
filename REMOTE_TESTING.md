@@ -17,6 +17,8 @@ The target is to confirm:
 - `backend/` - Rust backend service
 - `frontend/` - React + Vite admin UI
 - `migrations/` - SQLx migrations
+- `compose.yaml` - preferred local container startup path
+- `.env.example` - example runtime configuration for Docker Compose
 - `deploy/Dockerfile` - production container image
 - `deploy/OPERATIONS.md` - runtime and operational notes
 - `backend/config.toml.example` - local example config
@@ -113,6 +115,24 @@ Expected result:
 - backend unit and integration tests pass
 - frontend test suite passes
 - frontend production build passes
+
+## Docker Compose Startup
+
+The preferred container startup path uses the published Docker Hub image.
+
+```bash
+cp .env.example .env
+docker compose up -d
+```
+
+If port `8080` is already busy on the host, change `OXIDERELAY_PUBLISHED_PORT`
+in `.env` before starting the stack.
+
+Expected result:
+
+- container starts successfully
+- `GET http://127.0.0.1:<published-port>/api/health` returns `ok`
+- SQLite files are written into the Compose-managed volume
 
 ## Manual Test Scenarios
 
@@ -282,6 +302,9 @@ Expected result:
 - container starts
 - `GET http://127.0.0.1:8080/api/health` returns `ok`
 - SQLite files are written under `/data`
+
+This scenario validates the source-build path. For the default published-image path,
+prefer the Docker Compose startup described earlier in this document.
 
 Restart check:
 

@@ -39,9 +39,7 @@ OxideRelay is not intended to be a full Translation Management System (TMS) in t
 * Vite
 * React Router
 * TanStack Query
-* React Hook Form
-* MUI
-* MUI DataGrid Community
+* Lucide React
 
 ## Authentication
 
@@ -70,6 +68,7 @@ API keys are out of scope for MVP.
 
 ## Deployment
 
+* Docker Compose
 * Docker
 * Native binary
 
@@ -88,7 +87,7 @@ API keys are out of scope for MVP.
 ```text
                  ┌────────────────────┐
                  │    Admin Web UI    │
-                 │  React + MUI       │
+                 │ React + TypeScript  │
                  └─────────┬──────────┘
                            │
                            │ HTTP
@@ -741,7 +740,8 @@ Rules:
 Default cache policy:
 
 ```http
-Cache-Control: public, max-age=300
+Unversioned URLs: Cache-Control: public, max-age=300, must-revalidate
+Versioned URLs:   Cache-Control: public, max-age=31536000, immutable
 ```
 
 ---

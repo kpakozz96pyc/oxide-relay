@@ -18,6 +18,7 @@ import {
   TranslationGridRow,
 } from "../api";
 import { usePermissionSet } from "../hooks/usePermissionSet";
+import { useTranslation } from "../i18n";
 import { readEnvironmentPermission, editEnvironmentPermission } from "../lib/permissions";
 import { LoadingScreen } from "../components/LoadingScreen";
 import { ErrorCard } from "../components/ErrorCard";
@@ -54,6 +55,7 @@ function createDraftId(): string {
 export function ProjectPage() {
   const { projectSlug = "" } = useParams();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const translationGridRef = useRef<HTMLDivElement | null>(null);
   const [environment, setEnvironment] = useState("");
   const [language, setLanguage] = useState("");
@@ -256,16 +258,16 @@ export function ProjectPage() {
   });
 
   if (projectQuery.isLoading || languagesQuery.isLoading || namespacesQuery.isLoading || environmentsQuery.isLoading) {
-    return <LoadingScreen label="Loading project workspace" compact />;
+    return <LoadingScreen label={t("project.loading")} compact />;
   }
 
   if (projectQuery.isError) {
-    return <ErrorCard title="Project is unavailable" message={buildErrorMessage(projectQuery.error)} />;
+    return <ErrorCard title={t("project.error.title")} message={buildErrorMessage(projectQuery.error)} />;
   }
 
   const project = projectQuery.data;
   if (!project) {
-    return <ErrorCard title="Project is unavailable" message="Project data was not returned by the API." />;
+    return <ErrorCard title={t("project.error.title")} message={t("project.error.no_data")} />;
   }
 
   const canEditProject = project.is_owner || permissionSet.has("EditProjects");
@@ -481,18 +483,18 @@ export function ProjectPage() {
     <section className="page">
       <header className="page-header">
         <div>
-          <p className="eyebrow">{project.is_owner ? "Owner Workspace" : "Member Workspace"}</p>
+          <p className="eyebrow">{project.is_owner ? t("project.badges.owner_workspace") : t("project.badges.member_workspace")}</p>
           <h1 className="page-title">{project.name}</h1>
-          <p className="page-description">{project.description ?? "No description yet."}</p>
+          <p className="page-description">{project.description ?? t("projects.empty_description")}</p>
         </div>
         <a className="button ghost" href="/projects">
-          Back to projects
+          {t("project.back_to_projects")}
         </a>
       </header>
 
       <div className="toolbar">
         <label className="field small">
-          <span>Environment</span>
+          <span>{t("project.filters.environment")}</span>
           <select value={environment} onChange={(event) => setEnvironment(event.target.value)}>
             {environmentsQuery.data?.map((item) => (
               <option key={item.id} value={item.slug}>
@@ -502,7 +504,7 @@ export function ProjectPage() {
           </select>
         </label>
         <label className="field small">
-          <span>Language</span>
+          <span>{t("project.filters.language")}</span>
           <select value={language} onChange={(event) => setLanguage(event.target.value)}>
             {languagesQuery.data?.map((item) => (
               <option key={item.id} value={item.code}>
@@ -512,7 +514,7 @@ export function ProjectPage() {
           </select>
         </label>
         <label className="field small">
-          <span>Namespace</span>
+          <span>{t("project.filters.namespace")}</span>
           <select value={namespace} onChange={(event) => setNamespace(event.target.value)}>
             {namespacesQuery.data?.map((item) => (
               <option key={item.id} value={item.name}>
@@ -526,7 +528,7 @@ export function ProjectPage() {
           disabled={importMutation.isPending || !canImportTranslations}
           onClick={() => importMutation.mutate()}
         >
-          Import JSON
+          {t("project.import.button")}
         </button>
       </div>
 
@@ -546,12 +548,12 @@ export function ProjectPage() {
       <div className="workspace-grid">
         <article className="panel stack gap-md">
           <header className="panel-header">
-            <h2>Translations</h2>
+            <h2>{t("project.translations.title")}</h2>
             <span className="badge">{totalTranslationRows}</span>
           </header>
           <div className="stack gap-md">
             <label className="field">
-              <span>Import JSON</span>
+              <span>{t("project.import.label")}</span>
               <textarea
                 className="textarea"
                 value={importJson}
@@ -562,22 +564,22 @@ export function ProjectPage() {
           </div>
           <div className="translation-toolbar">
             <label className="field search-field">
-              <span>Search</span>
+              <span>{t("project.search.label")}</span>
               <input
                 value={translationSearch}
                 onChange={(event) => setTranslationSearch(event.target.value)}
-                placeholder="Search key, namespace, description, language, value"
+                placeholder={t("project.search.placeholder")}
               />
             </label>
             <div className="field language-filter">
-              <span>Visible languages</span>
+              <span>{t("project.visible_languages.label")}</span>
               <div className="dropdown-shell">
                 <button
                   className="button ghost"
                   onClick={() => setLanguageMenuOpen((current) => !current)}
                   type="button"
                 >
-                  {selectedLanguageCodes.join(", ") || "Select languages"}
+                  {selectedLanguageCodes.join(", ") || t("project.visible_languages.placeholder")}
                 </button>
                 {languageMenuOpen ? (
                   <div className="dropdown-panel">
@@ -596,7 +598,7 @@ export function ProjectPage() {
               </div>
             </div>
             <label className="field compact-field">
-              <span>Page size</span>
+              <span>{t("project.pagination.page_size")}</span>
               <select
                 value={pageSize}
                 onChange={(event) => {
@@ -612,10 +614,10 @@ export function ProjectPage() {
           </div>
           {!canReadCurrentEnvironment ? (
             <div className="banner error">
-              You do not have permission to read translations for the selected environment.
+              {t("project.permissions.read_forbidden")}
             </div>
           ) : null}
-          {translationsQuery.isLoading ? <p className="muted">Loading translations...</p> : null}
+          {translationsQuery.isLoading ? <p className="muted">{t("project.translations.loading")}</p> : null}
           {translationsQuery.isError ? (
             <div className="banner error">{buildErrorMessage(translationsQuery.error)}</div>
           ) : null}
@@ -629,15 +631,15 @@ export function ProjectPage() {
               <table>
                 <thead>
                   <tr>
-                    <th>Namespace</th>
-                    <th>Key</th>
-                    <th>Description</th>
+                    <th>{t("project.table.namespace")}</th>
+                    <th>{t("project.table.key")}</th>
+                    <th>{t("project.table.description")}</th>
                     {selectedLanguageCodes.map((languageCode) => (
                       <th key={languageCode}>{languageCode}</th>
                     ))}
                     <th>
                       <div className="table-actions-header">
-                        <span>Actions</span>
+                        <span>{t("project.table.actions")}</span>
                         {canCreateTranslation ? (
                           <button
                             className="button primary add-row-button"
@@ -670,7 +672,7 @@ export function ProjectPage() {
                                   focusNextGridInput(event.currentTarget);
                                 }
                               }}
-                              placeholder="button.save"
+                              placeholder={t("project.table.new_key_placeholder")}
                               value={draft.key}
                             />
                           </td>
@@ -686,7 +688,7 @@ export function ProjectPage() {
                                   focusNextGridInput(event.currentTarget);
                                 }
                               }}
-                              placeholder="Optional description"
+                              placeholder={t("project.table.description_placeholder")}
                               value={draft.description}
                             />
                           </td>
@@ -707,7 +709,7 @@ export function ProjectPage() {
                                     focusNextGridInput(event.currentTarget);
                                   }
                                 }}
-                                placeholder={`Value (${languageCode})`}
+                                placeholder={`${t("project.table.value_placeholder")} (${languageCode})`}
                                 value={draft.values[languageCode] ?? ""}
                               />
                             </td>
@@ -721,7 +723,7 @@ export function ProjectPage() {
                               }}
                               type="button"
                             >
-                              Save
+                              {t("actions.save")}
                             </button>
                           </td>
                         </tr>
@@ -747,7 +749,7 @@ export function ProjectPage() {
                               focusNextGridInput(event.currentTarget);
                             }
                           }}
-                          placeholder="Optional description"
+                          placeholder={t("project.table.description_placeholder")}
                           value={draftValues[`desc:${translation.translation_key_id}`] ?? ""}
                         />
                       </td>
@@ -771,7 +773,7 @@ export function ProjectPage() {
                                   focusNextGridInput(event.currentTarget);
                                 }
                               }}
-                              placeholder={hasValue ? "" : `Add ${languageCode}`}
+                              placeholder={hasValue ? "" : `${t("project.table.add_value")} ${languageCode}`}
                               value={draftValues[draftKey] ?? ""}
                             />
                           </td>
@@ -793,7 +795,7 @@ export function ProjectPage() {
                               }
                             }}
                           >
-                            Delete {language}
+                            {`${t("actions.delete")} ${language}`}
                           </button>
                         </div>
                       </td>
@@ -804,7 +806,7 @@ export function ProjectPage() {
             </div>
             <div className="pagination-bar">
               <span className="muted">
-                Page {page} of {totalPages} · {totalTranslationRows} terms
+                {`${t("project.pagination.page")} ${page} ${t("project.pagination.of")} ${totalPages} · ${totalTranslationRows} ${t("project.pagination.terms")}`}
               </span>
               <div className="action-row">
                 <button
@@ -812,14 +814,14 @@ export function ProjectPage() {
                   disabled={page <= 1}
                   onClick={() => setPage((current) => Math.max(1, current - 1))}
                 >
-                  Previous
+                  {t("project.pagination.previous")}
                 </button>
                 <button
                   className="button ghost"
                   disabled={page >= totalPages}
                   onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
                 >
-                  Next
+                  {t("project.pagination.next")}
                 </button>
               </div>
             </div>

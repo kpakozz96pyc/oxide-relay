@@ -1,6 +1,7 @@
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { FolderOpen, Users, FileCode, LogOut } from "lucide-react";
 import { usePermissionSet } from "../hooks/usePermissionSet";
+import { useTranslation } from "../i18n";
 
 export function AppLayout(props: {
   user: { display_name: string; email: string };
@@ -10,6 +11,7 @@ export function AppLayout(props: {
   const navigate = useNavigate();
   const location = useLocation();
   const permissionSet = usePermissionSet();
+  const { language, setLanguage, supportedLanguages, t } = useTranslation();
   const canOpenUsersWorkspace =
     permissionSet.has("ManageUsers") || permissionSet.has("ManagePermissions");
 
@@ -23,10 +25,10 @@ export function AppLayout(props: {
       <aside className="sidebar">
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
           <div className="brand-block">
-            <p className="eyebrow">OxideRelay</p>
-            <h1>Admin Console</h1>
+            <p className="eyebrow">{t("app.name")}</p>
+            <h1>{t("layout.console.title")}</h1>
             <p className="sidebar-copy" style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)" }}>
-              Session-backed workspace for managing translations.
+              {t("layout.console.description")}
             </p>
           </div>
 
@@ -36,7 +38,7 @@ export function AppLayout(props: {
               className={isActive("/projects") ? "active" : ""}
             >
               <FolderOpen size={16} />
-              Projects
+              {t("nav.projects")}
             </Link>
             {canOpenUsersWorkspace ? (
               <Link
@@ -44,17 +46,27 @@ export function AppLayout(props: {
                 className={isActive("/users") ? "active" : ""}
               >
                 <Users size={16} />
-                Users
+                {t("nav.users")}
               </Link>
             ) : null}
             <a href="/api/openapi.json" target="_blank" rel="noreferrer">
               <FileCode size={16} />
-              OpenAPI
+              {t("nav.openapi")}
             </a>
           </nav>
         </div>
 
         <div className="user-card">
+          <label className="field" style={{ marginBottom: "var(--space-4)" }}>
+            <span>{t("layout.language.label")}</span>
+            <select value={language} onChange={(event) => setLanguage(event.target.value)}>
+              {supportedLanguages.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
             <strong style={{ fontSize: "var(--text-sm)" }}>{props.user.display_name}</strong>
             <span>{props.user.email}</span>
@@ -66,19 +78,45 @@ export function AppLayout(props: {
               try {
                 await props.onLogout();
               } catch (e) {
-                console.error("Logout error", e);
+                console.error(t("errors.logout"), e);
               }
               navigate("/login", { replace: true });
             }}
             type="button"
           >
             <LogOut size={14} />
-            Sign out
+            {t("layout.logout")}
           </button>
         </div>
       </aside>
 
-      <main className="content-shell">{props.children}</main>
+      <main className="content-shell">
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "var(--space-4)",
+            marginBottom: "var(--space-6)",
+          }}
+        >
+          <div>
+            <p className="eyebrow">{t("layout.header.eyebrow")}</p>
+            <strong>{t("layout.header.title")}</strong>
+          </div>
+          <label className="field small" style={{ minWidth: 120 }}>
+            <span>{t("layout.language.label")}</span>
+            <select value={language} onChange={(event) => setLanguage(event.target.value)}>
+              {supportedLanguages.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {props.children}
+      </main>
     </div>
   );
 }

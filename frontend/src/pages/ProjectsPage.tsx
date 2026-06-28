@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, buildErrorMessage, Project } from "../api";
 import { usePermissionSet } from "../hooks/usePermissionSet";
+import { useTranslation } from "../i18n";
 import { LoadingScreen } from "../components/LoadingScreen";
 import { ErrorCard } from "../components/ErrorCard";
 
@@ -12,6 +13,7 @@ export function ProjectsPage() {
   const [newProjectDescription, setNewProjectDescription] = useState("");
   const queryClient = useQueryClient();
   const permissionSet = usePermissionSet();
+  const { t } = useTranslation();
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -34,11 +36,11 @@ export function ProjectsPage() {
   });
 
   if (projectsQuery.isLoading) {
-    return <LoadingScreen label="Loading projects" compact />;
+    return <LoadingScreen label={t("projects.loading")} compact />;
   }
 
   if (projectsQuery.isError) {
-    return <ErrorCard title="Projects are unavailable" message={buildErrorMessage(projectsQuery.error)} />;
+    return <ErrorCard title={t("projects.error.title")} message={buildErrorMessage(projectsQuery.error)} />;
   }
 
   const projects = projectsQuery.data ?? [];
@@ -48,10 +50,10 @@ export function ProjectsPage() {
     <section className="page">
       <header className="page-header">
         <div>
-          <p className="eyebrow">Projects</p>
-          <h1 className="page-title">Owned and assigned projects</h1>
+          <p className="eyebrow">{t("projects.eyebrow")}</p>
+          <h1 className="page-title">{t("projects.title")}</h1>
         </div>
-        <span className="badge">{projects.length} visible</span>
+        <span className="badge">{`${projects.length} ${t("projects.visible_suffix")}`}</span>
       </header>
 
       {createProjectMutation.isError ? (
@@ -60,20 +62,20 @@ export function ProjectsPage() {
 
       <article className="panel stack gap-md">
         <header className="panel-header">
-          <h2>Create project</h2>
+          <h2>{t("projects.create.title")}</h2>
         </header>
         <div className="form-grid">
           <label className="field">
-            <span>Name</span>
+            <span>{t("projects.fields.name")}</span>
             <input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} />
           </label>
           <label className="field">
-            <span>Slug</span>
+            <span>{t("projects.fields.slug")}</span>
             <input value={newProjectSlug} onChange={(event) => setNewProjectSlug(event.target.value)} />
           </label>
         </div>
         <label className="field">
-          <span>Description</span>
+          <span>{t("projects.fields.description")}</span>
           <input
             value={newProjectDescription}
             onChange={(event) => setNewProjectDescription(event.target.value)}
@@ -84,7 +86,7 @@ export function ProjectsPage() {
           disabled={createProjectMutation.isPending || !canCreateProjects}
           onClick={() => createProjectMutation.mutate()}
         >
-          Create project
+          {t("projects.create.submit")}
         </button>
       </article>
 
@@ -93,10 +95,10 @@ export function ProjectsPage() {
           <Link className="project-card" key={project.id} to={`/projects/${project.slug}`}>
             <div className="stack gap-sm">
               <span className="badge subtle" style={{ alignSelf: "flex-start" }}>
-                {project.is_owner ? "Owner" : "Member"}
+                {project.is_owner ? t("projects.badges.owner") : t("projects.badges.member")}
               </span>
               <h2>{project.name}</h2>
-              <p>{project.description ?? "No description yet."}</p>
+              <p>{project.description ?? t("projects.empty_description")}</p>
             </div>
           </Link>
         ))}

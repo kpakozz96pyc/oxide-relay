@@ -6,27 +6,31 @@ import { UsersPage } from "./pages/UsersPage";
 import { AppLayout } from "./components/AppLayout";
 import { LoadingScreen } from "./components/LoadingScreen";
 import { useSession } from "./hooks/useSession";
+import { I18nProvider, useTranslation } from "./i18n";
 
 export function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route element={<RequireAuth />}>
-        <Route path="/" element={<Navigate to="/projects" replace />} />
-        <Route path="/projects" element={<ProjectsPage />} />
-        <Route path="/users" element={<UsersPage />} />
-        <Route path="/projects/:projectSlug" element={<ProjectPage />} />
-      </Route>
-    </Routes>
+    <I18nProvider>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route element={<RequireAuth />}>
+          <Route path="/" element={<Navigate to="/projects" replace />} />
+          <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/users" element={<UsersPage />} />
+          <Route path="/projects/:projectSlug" element={<ProjectPage />} />
+        </Route>
+      </Routes>
+    </I18nProvider>
   );
 }
 
 function RequireAuth() {
   const location = useLocation();
   const session = useSession();
+  const { t } = useTranslation();
 
   if (session.isLoading) {
-    return <LoadingScreen label="Restoring session" />;
+    return <LoadingScreen label={t("loading.session.restore")} />;
   }
 
   if (!session.user) {

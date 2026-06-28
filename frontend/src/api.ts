@@ -155,7 +155,7 @@ export function buildErrorMessage(error: unknown): string {
     }
   }
 
-  return "An unexpected error occurred.";
+  return "errors.unexpected";
 }
 
 async function request<T>(path: string, init: RequestInit): Promise<T> {

@@ -16,6 +16,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 use tower::util::ServiceExt;
 use tower_http::{
+    cors::{Any, CorsLayer},
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
@@ -23,6 +24,30 @@ use tower_http::{
 use crate::{app::AppState, auth};
 
 pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
+    let public_delivery_router = Router::new()
+        .route(
+            "/api/v1/projects/{project_slug}/delivery-metadata",
+            get(delivery::delivery_metadata),
+        )
+        .route(
+            "/api/v1/projects/{project_slug}/locales/{language_code}",
+            get(delivery::locale_bundle),
+        )
+        .route(
+            "/api/v1/projects/{project_slug}/delivery-manifest/{language_code}",
+            get(delivery::delivery_manifest),
+        )
+        .route(
+            "/static/{project_slug}/{environment_slug}/{language_code}/{*namespace_file}",
+            get(delivery::static_namespace_file),
+        )
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods([axum::http::Method::GET, axum::http::Method::OPTIONS])
+                .allow_headers(Any),
+        );
+
     let api_router = Router::new()
         .route("/api/health", get(health))
         .route("/api/openapi.json", get(docs::openapi_json))
@@ -105,18 +130,7 @@ pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
             "/api/v1/projects/{project_slug}/exports/json",
             get(translations::export_translations),
         )
-        .route(
-            "/api/v1/projects/{project_slug}/locales/{language_code}",
-            get(delivery::locale_bundle),
-        )
-        .route(
-            "/api/v1/projects/{project_slug}/delivery-manifest/{language_code}",
-            get(delivery::delivery_manifest),
-        )
-        .route(
-            "/static/{project_slug}/{environment_slug}/{language_code}/{*namespace_file}",
-            get(delivery::static_namespace_file),
-        )
+        .merge(public_delivery_router)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 

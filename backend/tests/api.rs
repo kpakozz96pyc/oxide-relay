@@ -180,6 +180,32 @@ async fn public_delivery_endpoints_return_expected_payloads() {
         .insert_translation_value(&key_id, &language_id, &environment_id, "Сохранить")
         .await;
 
+    let metadata_response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/delivery-project/delivery-metadata?environment=production")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(metadata_response.status(), StatusCode::OK);
+    assert_eq!(
+        metadata_response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .expect("access-control-allow-origin"),
+        "*"
+    );
+    let metadata_body = json_body(metadata_response).await;
+    assert_eq!(metadata_body["project"], "delivery-project");
+    assert_eq!(metadata_body["environment"], "production");
+    assert!(metadata_body["version"].as_str().is_some());
+    assert_eq!(metadata_body["languages"][0]["code"], "ru");
+    assert_eq!(metadata_body["languages"][0]["name"], "Russian");
+    assert_eq!(metadata_body["namespaces"][0]["name"], "common");
+
     let locale_response = harness
         .request(
             Request::builder()
@@ -197,6 +223,13 @@ async fn public_delivery_endpoints_return_expected_payloads() {
             .get(header::CACHE_CONTROL)
             .expect("cache-control"),
         "public, max-age=300, must-revalidate"
+    );
+    assert_eq!(
+        locale_response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .expect("access-control-allow-origin"),
+        "*"
     );
     let locale_etag = locale_response
         .headers()
@@ -241,6 +274,13 @@ async fn public_delivery_endpoints_return_expected_payloads() {
             .expect("cache-control"),
         "public, max-age=300, must-revalidate"
     );
+    assert_eq!(
+        manifest_response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .expect("access-control-allow-origin"),
+        "*"
+    );
     let manifest_body = json_body(manifest_response).await;
     let locale_bundle_url = manifest_body["locale_bundle_url"]
         .as_str()
@@ -262,6 +302,13 @@ async fn public_delivery_endpoints_return_expected_payloads() {
         .await;
 
     assert_eq!(static_response.status(), StatusCode::OK);
+    assert_eq!(
+        static_response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .expect("access-control-allow-origin"),
+        "*"
+    );
     assert_eq!(
         static_response
             .headers()

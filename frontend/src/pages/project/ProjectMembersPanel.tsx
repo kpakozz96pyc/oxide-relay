@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiDelete, buildErrorMessage, ProjectMember } from "../../api";
+import { useTranslation } from "../../i18n";
 
 export function ProjectMembersPanel({
   projectSlug,
@@ -12,6 +13,7 @@ export function ProjectMembersPanel({
   canViewMembers: boolean;
 }) {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const [memberUserId, setMemberUserId] = useState("");
 
   const membersQuery = useQuery({
@@ -44,15 +46,15 @@ export function ProjectMembersPanel({
   return (
     <div className="stack gap-md">
       <header className="panel-header">
-        <h2>Members</h2>
+        <h2>{t("project.members.title")}</h2>
         <span className="badge">{membersQuery.data?.length ?? 0}</span>
       </header>
       <label className="field">
-        <span>Add member by user ID</span>
+        <span>{t("project.members.add_by_id")}</span>
         <input
           value={memberUserId}
           onChange={(event) => setMemberUserId(event.target.value)}
-          placeholder="Paste user id"
+          placeholder={t("project.members.add_placeholder")}
         />
       </label>
       <button
@@ -60,9 +62,9 @@ export function ProjectMembersPanel({
         disabled={addMemberMutation.isPending || !canManageMembers || !memberUserId.trim()}
         onClick={() => addMemberMutation.mutate()}
       >
-        Add member
+        {t("project.members.add")}
       </button>
-      {membersQuery.isLoading ? <p className="muted">Loading members...</p> : null}
+      {membersQuery.isLoading ? <p className="muted">{t("project.members.loading")}</p> : null}
       {membersQuery.isError ? (
         <div className="banner error">{buildErrorMessage(membersQuery.error)}</div>
       ) : null}
@@ -78,7 +80,7 @@ export function ProjectMembersPanel({
             <strong>{member.display_name}</strong>
             <span className="muted">{member.email}</span>
             <span className="badge subtle">
-              {member.is_owner ? "Owner" : member.is_active ? "Active" : "Inactive"}
+              {member.is_owner ? t("projects.badges.owner") : member.is_active ? t("users.badges.active") : t("users.badges.inactive")}
             </span>
           </div>
           {!member.is_owner ? (
@@ -87,7 +89,7 @@ export function ProjectMembersPanel({
               disabled={removeMemberMutation.isPending || !canManageMembers}
               onClick={() => removeMemberMutation.mutate(member.id)}
             >
-              Remove
+              {t("project.members.remove")}
             </button>
           ) : null}
         </div>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { apiPut, apiDelete, buildErrorMessage, Project } from "../../api";
+import { useTranslation } from "../../i18n";
 
 export function ProjectSettingsPanel({
   project,
@@ -14,6 +15,7 @@ export function ProjectSettingsPanel({
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const [isEditingProject, setIsEditingProject] = useState(false);
   const [editProjectName, setEditProjectName] = useState("");
   const [editProjectSlug, setEditProjectSlug] = useState("");
@@ -26,11 +28,11 @@ export function ProjectSettingsPanel({
         slug: editProjectSlug,
         description: editProjectDescription || null,
       }),
-    onSuccess: async (_, variables) => {
+    onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["project"] });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       setIsEditingProject(false);
-      
+
       if (editProjectSlug !== project.slug) {
         navigate(`/projects/${editProjectSlug}`, { replace: true });
       }
@@ -48,7 +50,7 @@ export function ProjectSettingsPanel({
   return (
     <div className="stack gap-md">
       <header className="panel-header">
-        <h2>Project settings</h2>
+        <h2>{t("project.settings.title")}</h2>
       </header>
       {updateProjectMutation.isError ? (
         <div className="banner error">{buildErrorMessage(updateProjectMutation.error)}</div>
@@ -61,16 +63,16 @@ export function ProjectSettingsPanel({
         <div className="stack gap-md">
           <div className="form-grid">
             <label className="field">
-              <span>Name</span>
+              <span>{t("project.fields.name")}</span>
               <input value={editProjectName} onChange={(e) => setEditProjectName(e.target.value)} />
             </label>
             <label className="field">
-              <span>Slug</span>
+              <span>{t("project.fields.slug")}</span>
               <input value={editProjectSlug} onChange={(e) => setEditProjectSlug(e.target.value)} />
             </label>
           </div>
           <label className="field">
-            <span>Description</span>
+            <span>{t("project.fields.description")}</span>
             <textarea
               className="textarea"
               rows={3}
@@ -84,16 +86,16 @@ export function ProjectSettingsPanel({
               disabled={updateProjectMutation.isPending}
               onClick={() => updateProjectMutation.mutate()}
             >
-              Save changes
+              {t("project.settings.save")}
             </button>
             <button className="button ghost" onClick={() => setIsEditingProject(false)}>
-              Cancel
+              {t("actions.cancel")}
             </button>
           </div>
         </div>
       ) : (
         <div className="stack gap-sm">
-          <p className="muted">Modify project details or permanently delete this project.</p>
+          <p className="muted">{t("project.settings.description")}</p>
           <div className="action-row">
             <button
               className="button secondary"
@@ -105,18 +107,18 @@ export function ProjectSettingsPanel({
                 setIsEditingProject(true);
               }}
             >
-              Edit project
+              {t("project.settings.edit")}
             </button>
             <button
               className="button ghost danger"
               disabled={deleteProjectMutation.isPending || !canDeleteProject}
               onClick={() => {
-                if (window.confirm("Are you sure you want to delete this project? This action cannot be undone.")) {
+                if (window.confirm(t("project.settings.delete_confirm"))) {
                   deleteProjectMutation.mutate();
                 }
               }}
             >
-              Delete project
+              {t("project.settings.delete")}
             </button>
           </div>
         </div>

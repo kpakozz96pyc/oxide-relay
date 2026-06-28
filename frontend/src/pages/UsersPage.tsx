@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPut, apiDelete, buildErrorMessage, User, Permission } from "../api";
 import { usePermissionSet } from "../hooks/usePermissionSet";
+import { useTranslation } from "../i18n";
 import { LoadingScreen } from "../components/LoadingScreen";
 import { ErrorCard } from "../components/ErrorCard";
 
@@ -17,6 +18,7 @@ export function UsersPage() {
   const [editIsActive, setEditIsActive] = useState(true);
   const queryClient = useQueryClient();
   const permissionSet = usePermissionSet();
+  const { t } = useTranslation();
   const canManageUsers = permissionSet.has("ManageUsers");
   const canManagePermissions = permissionSet.has("ManagePermissions");
 
@@ -115,30 +117,30 @@ export function UsersPage() {
   if (!canManageUsers && !canManagePermissions) {
     return (
       <ErrorCard
-        title="Users are unavailable"
-        message="You do not have permission to manage users or direct permissions."
+        title={t("users.error.title")}
+        message={t("users.error.forbidden")}
       />
     );
   }
 
   if ((canManageUsers && usersQuery.isLoading) || (canManagePermissions && permissionsQuery.isLoading)) {
-    return <LoadingScreen label="Loading users workspace" compact />;
+    return <LoadingScreen label={t("users.loading")} compact />;
   }
 
   if (canManageUsers && usersQuery.isError) {
-    return <ErrorCard title="Users are unavailable" message={buildErrorMessage(usersQuery.error)} />;
+    return <ErrorCard title={t("users.error.title")} message={buildErrorMessage(usersQuery.error)} />;
   }
 
   if (canManagePermissions && permissionsQuery.isError) {
-    return <ErrorCard title="Permissions are unavailable" message={buildErrorMessage(permissionsQuery.error)} />;
+    return <ErrorCard title={t("users.permissions.error.title")} message={buildErrorMessage(permissionsQuery.error)} />;
   }
 
   return (
     <section className="page">
       <header className="page-header">
         <div>
-          <p className="eyebrow">Users</p>
-          <h1 className="page-title">Manage accounts and direct permissions</h1>
+          <p className="eyebrow">{t("users.eyebrow")}</p>
+          <h1 className="page-title">{t("users.title")}</h1>
         </div>
       </header>
 
@@ -158,20 +160,20 @@ export function UsersPage() {
       <div className="workspace-grid">
         <article className="panel stack gap-md">
           <header className="panel-header">
-            <h2>Create user</h2>
+            <h2>{t("users.create.title")}</h2>
           </header>
           <div className="form-grid">
             <label className="field">
-              <span>Email</span>
+              <span>{t("users.fields.email")}</span>
               <input value={newEmail} onChange={(event) => setNewEmail(event.target.value)} />
             </label>
             <label className="field">
-              <span>Display name</span>
+              <span>{t("users.fields.display_name")}</span>
               <input value={newDisplayName} onChange={(event) => setNewDisplayName(event.target.value)} />
             </label>
           </div>
           <label className="field">
-            <span>Password</span>
+            <span>{t("users.fields.password")}</span>
             <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
           </label>
           <button
@@ -179,13 +181,13 @@ export function UsersPage() {
             disabled={createUserMutation.isPending || !canManageUsers}
             onClick={() => createUserMutation.mutate()}
           >
-            Create user
+            {t("users.create.submit")}
           </button>
 
           <div className="divider" />
 
           <header className="panel-header">
-            <h2>All users</h2>
+            <h2>{t("users.list.title")}</h2>
             <span className="badge">{usersQuery.data?.length ?? 0}</span>
           </header>
           {usersQuery.data?.map((user) => (
@@ -199,17 +201,17 @@ export function UsersPage() {
                 <strong>{user.display_name}</strong>
                 <span className="muted">{user.email}</span>
               </div>
-              <span className="badge subtle">{user.is_active ? "Active" : "Inactive"}</span>
+              <span className="badge subtle">{user.is_active ? t("users.badges.active") : t("users.badges.inactive")}</span>
             </button>
           ))}
         </article>
 
         <article className="panel stack gap-md">
           <header className="panel-header">
-            <h2>Direct permissions</h2>
+            <h2>{t("users.permissions.title")}</h2>
           </header>
           <label className="field">
-            <span>Selected user</span>
+            <span>{t("users.permissions.selected_user")}</span>
             <select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
               {usersQuery.data?.map((user) => (
                 <option key={user.id} value={user.id}>
@@ -219,13 +221,13 @@ export function UsersPage() {
             </select>
           </label>
           <label className="field">
-            <span>Permission codes</span>
+            <span>{t("users.permissions.codes")}</span>
             <textarea
               className="textarea"
               rows={12}
               value={permissionText}
               onChange={(event) => setPermissionText(event.target.value)}
-              placeholder="One code per line"
+              placeholder={t("users.permissions.codes_placeholder")}
             />
           </label>
           <button
@@ -233,34 +235,34 @@ export function UsersPage() {
             disabled={!selectedUserId || replacePermissionsMutation.isPending || !canManagePermissions}
             onClick={() => replacePermissionsMutation.mutate()}
           >
-            Replace permissions
+            {t("users.permissions.replace")}
           </button>
           <div className="divider" />
           <header className="panel-header">
-            <h2>Update user</h2>
+            <h2>{t("users.update.title")}</h2>
           </header>
           <div className="form-grid">
             <label className="field">
-              <span>Email</span>
+              <span>{t("users.fields.email")}</span>
               <input value={editEmail} onChange={(event) => setEditEmail(event.target.value)} />
             </label>
             <label className="field">
-              <span>Display name</span>
+              <span>{t("users.fields.display_name")}</span>
               <input value={editDisplayName} onChange={(event) => setEditDisplayName(event.target.value)} />
             </label>
           </div>
           <label className="field">
-            <span>Password</span>
+            <span>{t("users.fields.password")}</span>
             <input
               type="password"
               value={editPassword}
               onChange={(event) => setEditPassword(event.target.value)}
-              placeholder="Leave blank to keep current password"
+              placeholder={t("users.update.password_placeholder")}
             />
           </label>
           <label className="checkbox-row">
             <input checked={editIsActive} onChange={(event) => setEditIsActive(event.target.checked)} type="checkbox" />
-            <span>User is active</span>
+            <span>{t("users.update.is_active")}</span>
           </label>
           <div className="action-row">
             <button
@@ -268,26 +270,26 @@ export function UsersPage() {
               disabled={!selectedUserId || updateUserMutation.isPending || !canManageUsers}
               onClick={() => updateUserMutation.mutate()}
             >
-              Save user
+              {t("users.update.save")}
             </button>
             <button
               className="button ghost danger"
               disabled={!selectedUserId || deleteUserMutation.isPending || !canManageUsers}
               onClick={() => deleteUserMutation.mutate()}
             >
-              Delete user
+              {t("users.update.delete")}
             </button>
           </div>
           <div className="divider" />
           <header className="panel-header">
-            <h2>Seeded catalog</h2>
+            <h2>{t("users.catalog.title")}</h2>
             <span className="badge">{permissionsQuery.data?.length ?? 0}</span>
           </header>
           <div className="permission-grid">
             {permissionsQuery.data?.map((permission) => (
               <div className="permission-card" key={permission.id}>
                 <strong>{permission.code}</strong>
-                <span className="muted">{permission.description ?? "No description"}</span>
+                <span className="muted">{permission.description ?? t("users.catalog.no_description")}</span>
               </div>
             ))}
           </div>

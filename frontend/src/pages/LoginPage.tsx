@@ -4,11 +4,13 @@ import { useMutation } from "@tanstack/react-query";
 import { Globe, Lock, Layers, Users } from "lucide-react";
 import { apiPost, buildErrorMessage, ApiError } from "../api";
 import { useSession } from "../hooks/useSession";
+import { useTranslation } from "../i18n";
 
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const session = useSession();
+  const { language, setLanguage, supportedLanguages, t } = useTranslation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -38,15 +40,26 @@ export function LoginPage() {
       {/* Left: hero / branding */}
       <div className="login-hero">
         <div className="login-hero-content">
-          <p className="eyebrow">OxideRelay</p>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-4)", alignItems: "flex-start" }}>
+            <p className="eyebrow">{t("app.name")}</p>
+            <label className="field small" style={{ minWidth: 120 }}>
+              <span>{t("layout.language.label")}</span>
+              <select value={language} onChange={(event) => setLanguage(event.target.value)}>
+                {supportedLanguages.map((item) => (
+                  <option key={item.code} value={item.code}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <h1 className="login-hero-title">
-            Manage your translations
+            {t("login.hero.title.line1")}
             <br />
-            at&nbsp;scale.
+            {t("login.hero.title.line2")}
           </h1>
           <p className="login-hero-desc">
-            A session-backed admin console for managing translation keys,
-            environments, and project members — all in one place.
+            {t("login.hero.description")}
           </p>
 
           <div className="login-hero-features">
@@ -55,8 +68,8 @@ export function LoginPage() {
                 <Globe size={16} />
               </div>
               <div>
-                <strong>Multi-environment delivery</strong>
-                Serve different translations per environment with static JSON endpoints.
+                <strong>{t("login.features.delivery.title")}</strong>
+                {t("login.features.delivery.description")}
               </div>
             </div>
             <div className="login-hero-feature">
@@ -64,8 +77,8 @@ export function LoginPage() {
                 <Layers size={16} />
               </div>
               <div>
-                <strong>Namespaces & locales</strong>
-                Organise keys by namespace and language, import JSON bundles in bulk.
+                <strong>{t("login.features.namespaces.title")}</strong>
+                {t("login.features.namespaces.description")}
               </div>
             </div>
             <div className="login-hero-feature">
@@ -73,15 +86,15 @@ export function LoginPage() {
                 <Users size={16} />
               </div>
               <div>
-                <strong>Role-based access</strong>
-                Fine-grained permissions per user across all projects.
+                <strong>{t("login.features.permissions.title")}</strong>
+                {t("login.features.permissions.description")}
               </div>
             </div>
           </div>
         </div>
 
         <div className="login-hero-footer">
-          OxideRelay · Built with Rust &amp; React
+          {t("login.hero.footer")}
         </div>
       </div>
 
@@ -105,10 +118,10 @@ export function LoginPage() {
           </div>
 
           <h1 className="panel-title" style={{ marginTop: "var(--space-4)" }}>
-            Sign in
+            {t("login.form.title")}
           </h1>
           <p className="panel-copy" style={{ marginBottom: "var(--space-6)" }}>
-            Access your workspace with an admin or project user account.
+            {t("login.form.description")}
           </p>
 
           <form
@@ -120,28 +133,28 @@ export function LoginPage() {
             }}
           >
             <label className="field">
-              <span>Email</span>
+              <span>{t("login.form.email.label")}</span>
               <input
                 type="email"
                 value={email}
                 autoComplete="email"
-                placeholder="you@example.com"
+                placeholder={t("login.form.email.placeholder")}
                 onChange={(event) => setEmail(event.target.value)}
               />
             </label>
             <label className="field">
-              <span>Password</span>
+              <span>{t("login.form.password.label")}</span>
               <input
                 type="password"
                 value={password}
                 autoComplete="current-password"
-                placeholder="••••••••"
+                placeholder={t("login.form.password.placeholder")}
                 onChange={(event) => setPassword(event.target.value)}
               />
             </label>
             {error ? <div className="banner error">{error}</div> : null}
             <button className="button primary" disabled={loginMutation.isPending} type="submit">
-              {loginMutation.isPending ? "Signing in…" : "Sign In"}
+              {loginMutation.isPending ? t("login.form.submit.pending") : t("login.form.submit.idle")}
             </button>
           </form>
         </div>

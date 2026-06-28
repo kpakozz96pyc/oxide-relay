@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiPost, apiDelete, buildErrorMessage, Environment, Language, Namespace } from "../../api";
+import { apiGet, apiPost, apiDelete, Environment, Language, Namespace } from "../../api";
+import { useTranslation } from "../../i18n";
 
 export function ProjectResourcesPanel({
   projectSlug,
@@ -10,6 +11,7 @@ export function ProjectResourcesPanel({
   canEditProject: boolean;
 }) {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   const [newLanguageCode, setNewLanguageCode] = useState("");
   const [newLanguageName, setNewLanguageName] = useState("");
@@ -100,16 +102,20 @@ export function ProjectResourcesPanel({
     <>
       <div className="stack gap-md">
         <header className="panel-header">
-          <h2>Languages</h2>
+          <h2>{t("project.resources.languages.title")}</h2>
         </header>
         <div className="form-grid">
           <label className="field">
-            <span>Code</span>
-            <input value={newLanguageCode} onChange={(event) => setNewLanguageCode(event.target.value)} placeholder="en" />
+            <span>{t("project.resources.languages.code")}</span>
+            <input
+              value={newLanguageCode}
+              onChange={(event) => setNewLanguageCode(event.target.value)}
+              placeholder={t("project.resources.languages.code_placeholder")}
+            />
           </label>
           <label className="field">
-            <span>Name (optional)</span>
-            <input value={newLanguageName} onChange={(event) => setNewLanguageName(event.target.value)} placeholder="English" />
+            <span>{t("project.resources.languages.name_optional")}</span>
+            <input value={newLanguageName} onChange={(event) => setNewLanguageName(event.target.value)} placeholder={t("project.resources.languages.name_placeholder")} />
           </label>
         </div>
         <button
@@ -117,7 +123,7 @@ export function ProjectResourcesPanel({
           disabled={createLanguageMutation.isPending || !canEditProject || !newLanguageCode.trim()}
           onClick={() => createLanguageMutation.mutate()}
         >
-          Add language
+          {t("project.resources.languages.add")}
         </button>
         {languagesQuery.data?.map((item) => (
           <div className="member-card" key={item.id}>
@@ -130,7 +136,7 @@ export function ProjectResourcesPanel({
               disabled={deleteLanguageMutation.isPending || !canEditProject}
               onClick={() => deleteLanguageMutation.mutate(item.code)}
             >
-              Delete
+              {t("actions.delete")}
             </button>
           </div>
         ))}
@@ -139,18 +145,22 @@ export function ProjectResourcesPanel({
       <div className="divider" />
       <div className="stack gap-md">
         <header className="panel-header">
-          <h2>Namespaces</h2>
+          <h2>{t("project.resources.namespaces.title")}</h2>
         </header>
         <label className="field">
-          <span>Name</span>
-          <input value={newNamespaceName} onChange={(event) => setNewNamespaceName(event.target.value)} placeholder="common" />
+          <span>{t("project.resources.namespaces.name")}</span>
+          <input
+            value={newNamespaceName}
+            onChange={(event) => setNewNamespaceName(event.target.value)}
+            placeholder={t("project.resources.namespaces.name_placeholder")}
+          />
         </label>
         <button
           className="button secondary"
           disabled={createNamespaceMutation.isPending || !canEditProject || !newNamespaceName.trim()}
           onClick={() => createNamespaceMutation.mutate()}
         >
-          Add namespace
+          {t("project.resources.namespaces.add")}
         </button>
         {namespacesQuery.data?.map((item) => (
           <div className="member-card" key={item.id}>
@@ -162,7 +172,7 @@ export function ProjectResourcesPanel({
               disabled={deleteNamespaceMutation.isPending || !canEditProject}
               onClick={() => deleteNamespaceMutation.mutate(item.name)}
             >
-              Delete
+              {t("actions.delete")}
             </button>
           </div>
         ))}
@@ -171,16 +181,20 @@ export function ProjectResourcesPanel({
       <div className="divider" />
       <div className="stack gap-md">
         <header className="panel-header">
-          <h2>Environments</h2>
+          <h2>{t("project.resources.environments.title")}</h2>
         </header>
         <div className="form-grid">
           <label className="field">
-            <span>Name</span>
-            <input value={newEnvironmentName} onChange={(event) => setNewEnvironmentName(event.target.value)} placeholder="Production" />
+            <span>{t("project.resources.environments.name")}</span>
+            <input value={newEnvironmentName} onChange={(event) => setNewEnvironmentName(event.target.value)} placeholder={t("project.resources.environments.name_placeholder")} />
           </label>
           <label className="field">
-            <span>Slug</span>
-            <input value={newEnvironmentSlug} onChange={(event) => setNewEnvironmentSlug(event.target.value)} placeholder="production" />
+            <span>{t("project.resources.environments.slug")}</span>
+            <input
+              value={newEnvironmentSlug}
+              onChange={(event) => setNewEnvironmentSlug(event.target.value)}
+              placeholder={t("project.resources.environments.slug_placeholder")}
+            />
           </label>
         </div>
         <button
@@ -188,7 +202,7 @@ export function ProjectResourcesPanel({
           disabled={createEnvironmentMutation.isPending || !canEditProject || !newEnvironmentName.trim() || !newEnvironmentSlug.trim()}
           onClick={() => createEnvironmentMutation.mutate()}
         >
-          Add environment
+          {t("project.resources.environments.add")}
         </button>
         {environmentsQuery.data?.map((item) => (
           <div className="member-card" key={item.id}>
@@ -201,7 +215,7 @@ export function ProjectResourcesPanel({
               disabled={deleteEnvironmentMutation.isPending || !canEditProject}
               onClick={() => deleteEnvironmentMutation.mutate(item.slug)}
             >
-              Delete
+              {t("actions.delete")}
             </button>
           </div>
         ))}

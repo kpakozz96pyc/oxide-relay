@@ -24,6 +24,68 @@ const IMMUTABLE_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 
 #[utoipa::path(
     get,
+    path = "/api/v1/projects/{project_slug}/delivery-metadata",
+    params(
+        ("project_slug" = String, Path, description = "Project slug"),
+        MetadataQuery
+    ),
+    responses((status = 200, body = DeliveryMetadataResponse))
+)]
+pub async fn delivery_metadata(
+    State(state): State<AppState>,
+    Path(project_slug): Path<String>,
+    Query(query): Query<MetadataQuery>,
+) -> AppResult<Json<DeliveryMetadataResponse>> {
+    let environment_slug = required_non_empty(&query.environment, "Environment is required.")?;
+    let version_rows = load_environment_version_rows(&state, &project_slug, environment_slug).await?;
+    let version = build_delivery_metadata_version(&version_rows);
+
+    let languages = sqlx::query_as::<_, DeliveryMetadataLanguage>(
+        r#"
+        SELECT DISTINCT
+            l.code,
+            l.name
+        FROM translation_values tv
+        JOIN languages l ON l.id = tv.language_id
+        JOIN environments e ON e.id = tv.environment_id
+        JOIN translation_keys tk ON tk.id = tv.translation_key_id
+        JOIN projects p ON p.id = tk.project_id
+        WHERE p.slug = ?1
+          AND e.slug = ?2
+        ORDER BY l.code
+        "#,
+    )
+    .bind(project_slug.trim())
+    .bind(environment_slug.trim())
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|error| ApiError::from_sqlx(error, "Unable to load localized languages."))?;
+
+    let namespaces = sqlx::query_as::<_, DeliveryMetadataNamespace>(
+        r#"
+        SELECT n.name
+        FROM namespaces n
+        JOIN projects p ON p.id = n.project_id
+        WHERE p.slug = ?1
+        ORDER BY n.name
+        "#,
+    )
+    .bind(project_slug.trim())
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|error| ApiError::from_sqlx(error, "Unable to load namespaces."))?;
+
+    Ok(Json(DeliveryMetadataResponse {
+        project: project_slug,
+        environment: environment_slug.to_owned(),
+        version,
+        languages,
+        namespaces,
+    }))
+}
+
+#[utoipa::path(
+    get,
     path = "/api/v1/projects/{project_slug}/locales/{language_code}",
     params(
         ("project_slug" = String, Path, description = "Project slug"),
@@ -214,6 +276,36 @@ async fn load_locale_rows(
     .map_err(|error| ApiError::from_sqlx(error, "Unable to load locale bundle."))
 }
 
+async fn load_environment_version_rows(
+    state: &AppState,
+    project_slug: &str,
+    environment_slug: &str,
+) -> AppResult<Vec<LocaleBundleRow>> {
+    sqlx::query_as::<_, LocaleBundleRow>(
+        r#"
+        SELECT
+            n.name AS namespace,
+            tk.key,
+            tv.value,
+            tv.updated_at,
+            tk.updated_at AS key_updated_at
+        FROM translation_values tv
+        JOIN translation_keys tk ON tk.id = tv.translation_key_id
+        JOIN environments e ON e.id = tv.environment_id
+        JOIN namespaces n ON n.id = tk.namespace_id
+        JOIN projects p ON p.id = tk.project_id
+        WHERE p.slug = ?1
+          AND e.slug = ?2
+        ORDER BY n.name, tk.key
+        "#,
+    )
+    .bind(project_slug.trim())
+    .bind(environment_slug.trim())
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|error| ApiError::from_sqlx(error, "Unable to load delivery metadata version."))
+}
+
 fn respond_with_json_cache<T: Serialize>(
     request_headers: &HeaderMap,
     requested_version: Option<&str>,
@@ -287,6 +379,10 @@ fn build_manifest_version<'a>(
     build_version_token(std::iter::once(locale_bundle_version).chain(namespaces))
 }
 
+fn build_delivery_metadata_version(rows: &[LocaleBundleRow]) -> String {
+    build_locale_bundle_version(rows)
+}
+
 fn build_version_token<'a>(parts: impl Iterator<Item = &'a str>) -> String {
     let mut hash = 0xcbf29ce484222325u64;
 
@@ -351,6 +447,31 @@ pub struct DeliveryQuery {
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
 pub struct StaticNamespaceQuery {
     pub v: Option<String>,
+}
+
+#[derive(Debug, Deserialize, IntoParams, ToSchema)]
+pub struct MetadataQuery {
+    pub environment: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DeliveryMetadataResponse {
+    pub project: String,
+    pub environment: String,
+    pub version: String,
+    pub languages: Vec<DeliveryMetadataLanguage>,
+    pub namespaces: Vec<DeliveryMetadataNamespace>,
+}
+
+#[derive(Debug, Serialize, ToSchema, FromRow)]
+pub struct DeliveryMetadataLanguage {
+    pub code: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, ToSchema, FromRow)]
+pub struct DeliveryMetadataNamespace {
+    pub name: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

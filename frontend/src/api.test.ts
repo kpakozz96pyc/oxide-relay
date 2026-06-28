@@ -46,6 +46,6 @@ describe("api helpers", () => {
   it("extracts readable messages from unknown error values", () => {
     expect(buildErrorMessage(new Error("boom"))).toBe("boom");
     expect(buildErrorMessage({ message: "from object" })).toBe("from object");
-    expect(buildErrorMessage(null)).toBe("An unexpected error occurred.");
+    expect(buildErrorMessage(null)).toBe("errors.unexpected");
   });
 });

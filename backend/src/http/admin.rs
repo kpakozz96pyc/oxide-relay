@@ -11,6 +11,7 @@ use crate::{
     auth::{self, AuthenticatedUser},
     errors::{ApiError, AppResult},
     repository::{members, permissions, users},
+    util,
 };
 
 // ---------------------------------------------------------------------------
@@ -236,34 +237,58 @@ pub async fn delete_project_member(
 // ---------------------------------------------------------------------------
 
 fn validate_create_user(payload: &CreateUserRequest) -> AppResult<()> {
-    if payload.email.trim().is_empty()
-        || payload.display_name.trim().is_empty()
-        || payload.password.trim().is_empty()
-    {
-        return Err(ApiError::validation(
-            "Email, display name, and password are required.",
-        ));
-    }
+    util::validate_email(&payload.email)?;
+    util::validate_display_name(&payload.display_name)?;
+    util::validate_password(&payload.password)?;
     Ok(())
 }
 
 fn validate_update_user(payload: &UpdateUserRequest) -> AppResult<()> {
     if let Some(email) = &payload.email
-        && email.trim().is_empty()
     {
-        return Err(ApiError::validation("Email cannot be empty."));
+        util::validate_email(email)?;
     }
     if let Some(name) = &payload.display_name
-        && name.trim().is_empty()
     {
-        return Err(ApiError::validation("Display name cannot be empty."));
+        util::validate_display_name(name)?;
     }
     if let Some(password) = &payload.password
-        && password.trim().is_empty()
     {
-        return Err(ApiError::validation("Password cannot be empty."));
+        util::validate_password(password)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::response::IntoResponse;
+
+    #[test]
+    fn create_user_validation_rejects_invalid_email() {
+        let error = validate_create_user(&CreateUserRequest {
+            email: "invalid-email".to_owned(),
+            password: "valid-pass".to_owned(),
+            display_name: "User".to_owned(),
+            is_active: Some(true),
+        })
+        .expect_err("validation error");
+
+        assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn create_user_validation_rejects_short_password() {
+        let error = validate_create_user(&CreateUserRequest {
+            email: "user@example.com".to_owned(),
+            password: "short".to_owned(),
+            display_name: "User".to_owned(),
+            is_active: Some(true),
+        })
+        .expect_err("validation error");
+
+        assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
+    }
 }
 
 // ---------------------------------------------------------------------------

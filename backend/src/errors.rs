@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
+use tracing::error;
 use utoipa::ToSchema;
 
 pub type AppResult<T> = Result<T, ApiError>;
@@ -46,7 +47,10 @@ impl ApiError {
                 Self::conflict(conflict_message)
             }
             sqlx::Error::RowNotFound => Self::not_found("Requested resource was not found."),
-            other => Self::internal(format!("database error: {other}")),
+            other => {
+                error!(error = %other, "Unhandled database error");
+                Self::internal("Internal server error.")
+            }
         }
     }
 
@@ -83,4 +87,18 @@ pub struct ErrorResponse {
 pub struct ErrorPayload {
     pub code: String,
     pub message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_sqlx_sanitizes_internal_errors() {
+        let error = ApiError::from_sqlx(sqlx::Error::Protocol("boom".to_owned()), "conflict");
+
+        assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(error.code, "InternalError");
+        assert_eq!(error.message, "Internal server error.");
+    }
 }

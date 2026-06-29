@@ -180,19 +180,26 @@ async fn root() -> &'static str {
     "OxideRelay backend is running."
 }
 
-async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
-    let database = match sqlx::query_scalar::<_, i64>("SELECT 1")
+async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
+    match sqlx::query_scalar::<_, i64>("SELECT 1")
         .fetch_one(&state.pool)
         .await
     {
-        Ok(_) => "ok",
-        Err(_) => "error",
-    };
-
-    Json(HealthResponse {
-        status: "ok",
-        database,
-    })
+        Ok(_) => (
+            StatusCode::OK,
+            Json(HealthResponse {
+                status: "ok",
+                database: "ok",
+            }),
+        ),
+        Err(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(HealthResponse {
+                status: "error",
+                database: "error",
+            }),
+        ),
+    }
 }
 
 #[derive(Serialize)]

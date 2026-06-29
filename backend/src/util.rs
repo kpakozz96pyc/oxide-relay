@@ -7,6 +7,11 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::errors::{ApiError, AppResult};
 
+pub const MAX_EMAIL_LEN: usize = 320;
+pub const MAX_DISPLAY_NAME_LEN: usize = 100;
+pub const MIN_PASSWORD_LEN: usize = 8;
+pub const MAX_PASSWORD_LEN: usize = 256;
+
 /// Returns the current UTC time formatted as RFC 3339.
 pub fn now_utc() -> AppResult<String> {
     OffsetDateTime::now_utc()
@@ -49,4 +54,60 @@ pub fn validate_max_length(value: &str, max_len: usize, field_name: &str) -> App
         )));
     }
     Ok(())
+}
+
+pub fn validate_email(value: &str) -> AppResult<&str> {
+    let trimmed = required_non_empty(value, "Email is required.")?;
+
+    if trimmed.len() > MAX_EMAIL_LEN {
+        return Err(ApiError::validation(format!(
+            "Email must be at most {MAX_EMAIL_LEN} characters."
+        )));
+    }
+
+    if trimmed.contains(char::is_whitespace) {
+        return Err(ApiError::validation("Email must not contain whitespace."));
+    }
+
+    let mut parts = trimmed.split('@');
+    let local = parts.next().unwrap_or_default();
+    let domain = parts.next().unwrap_or_default();
+
+    if local.is_empty() || domain.is_empty() || parts.next().is_some() {
+        return Err(ApiError::validation("Email format is invalid."));
+    }
+
+    if domain.starts_with('.') || domain.ends_with('.') || !domain.contains('.') {
+        return Err(ApiError::validation("Email format is invalid."));
+    }
+
+    if domain.split('.').any(|label| label.is_empty()) {
+        return Err(ApiError::validation("Email format is invalid."));
+    }
+
+    Ok(trimmed)
+}
+
+pub fn validate_display_name(value: &str) -> AppResult<&str> {
+    let trimmed = required_non_empty(value, "Display name is required.")?;
+    validate_max_length(trimmed, MAX_DISPLAY_NAME_LEN, "Display name")?;
+    Ok(trimmed)
+}
+
+pub fn validate_password(value: &str) -> AppResult<&str> {
+    let trimmed = required_non_empty(value, "Password is required.")?;
+
+    if trimmed.len() < MIN_PASSWORD_LEN {
+        return Err(ApiError::validation(format!(
+            "Password must be at least {MIN_PASSWORD_LEN} characters."
+        )));
+    }
+
+    if trimmed.len() > MAX_PASSWORD_LEN {
+        return Err(ApiError::validation(format!(
+            "Password must be at most {MAX_PASSWORD_LEN} characters."
+        )));
+    }
+
+    Ok(trimmed)
 }

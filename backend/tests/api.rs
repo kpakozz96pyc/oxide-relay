@@ -108,6 +108,43 @@ async fn login_me_logout_flow_works() {
 }
 
 #[tokio::test]
+async fn health_endpoint_reflects_database_readiness() {
+    let harness = TestHarness::new().await;
+
+    let healthy = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/health")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(healthy.status(), StatusCode::OK);
+    let healthy_body = json_body(healthy).await;
+    assert_eq!(healthy_body["status"], "ok");
+    assert_eq!(healthy_body["database"], "ok");
+
+    harness.pool.close().await;
+
+    let unhealthy = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/health")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(unhealthy.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let unhealthy_body = json_body(unhealthy).await;
+    assert_eq!(unhealthy_body["status"], "error");
+    assert_eq!(unhealthy_body["database"], "error");
+}
+
+#[tokio::test]
 async fn project_owner_has_implicit_access_but_member_without_permission_is_forbidden() {
     let harness = TestHarness::new().await;
     let owner_id = harness
@@ -498,6 +535,60 @@ async fn admin_user_permissions_and_project_members_endpoints_work() {
         .await;
 
     assert_eq!(delete_member.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn create_user_rejects_invalid_email_and_weak_password() {
+    let harness = TestHarness::new().await;
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+
+    let invalid_email = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/users")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "email": "invalid-email",
+                        "password": "strong-pass",
+                        "display_name": "Managed User",
+                        "is_active": true
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(invalid_email.status(), StatusCode::BAD_REQUEST);
+    let invalid_email_body = json_body(invalid_email).await;
+    assert_eq!(invalid_email_body["error"]["code"], "ValidationError");
+
+    let weak_password = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/users")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "email": "managed-user@example.com",
+                        "password": "short",
+                        "display_name": "Managed User",
+                        "is_active": true
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(weak_password.status(), StatusCode::BAD_REQUEST);
+    let weak_password_body = json_body(weak_password).await;
+    assert_eq!(weak_password_body["error"]["code"], "ValidationError");
 }
 
 #[tokio::test]

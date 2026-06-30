@@ -173,6 +173,22 @@ ManagePermissions
 
 It does not allow creating new permission codes at runtime.
 
+### Password Recovery
+
+Current password recovery flow is administrator-driven.
+
+Rules:
+
+```text
+A user with ManageUsers can generate a password reset link for any active user.
+The reset link is shown once in the admin UI.
+The link is valid for 15 minutes.
+Email delivery is not used in the current implementation.
+After a successful password reset, all existing sessions for that user are invalidated.
+```
+
+Reset links are intended for operational recovery in self-hosted setups where SMTP is not configured yet.
+
 ### Projects
 
 ```text

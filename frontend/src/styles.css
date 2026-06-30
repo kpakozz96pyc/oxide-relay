@@ -522,6 +522,17 @@ th {
   color: var(--color-info-text);
 }
 
+.inline-code-block {
+  display: block;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+}
+
 /* ============================================================
    DIVIDER
    ============================================================ */

@@ -4,15 +4,18 @@ use axum::{
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
+use tracing::info;
 use utoipa::ToSchema;
 
 use crate::{
     app::AppState,
     auth::{self, AuthenticatedUser},
     errors::{ApiError, AppResult},
-    repository::{members, permissions, users},
+    repository::{members, password_resets, permissions, users},
     util,
 };
+
+const PASSWORD_RESET_TTL_MINUTES: i64 = 15;
 
 // ---------------------------------------------------------------------------
 // Users
@@ -105,6 +108,54 @@ pub async fn delete_user(
     auth::require_permission(&state, &actor.id, "ManageUsers").await?;
     users::delete(&state.pool, &user_id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/users/{id}/password-reset-link",
+    params(("id" = String, Path, description = "User id")),
+    responses((status = 200, body = GeneratePasswordResetLinkResponse))
+)]
+pub async fn generate_password_reset_link(
+    State(state): State<AppState>,
+    actor: AuthenticatedUser,
+    Path(user_id): Path<String>,
+) -> AppResult<Json<GeneratePasswordResetLinkResponse>> {
+    auth::require_permission(&state, &actor.id, "ManageUsers").await?;
+
+    let user = users::find_row_by_id(&state.pool, &user_id).await?;
+    if !user.is_active {
+        return Err(ApiError::validation(
+            "Password reset links can only be generated for active users.",
+        ));
+    }
+
+    let _ = password_resets::purge_expired(&state.pool).await;
+    password_resets::invalidate_active_tokens_for_user(&state.pool, &user.id).await?;
+
+    let raw_token = util::generate_secure_token_hex(32);
+    let token_hash = util::sha256_hex(&raw_token);
+    let expires_at = util::future_utc_minutes(PASSWORD_RESET_TTL_MINUTES)?;
+
+    password_resets::create_reset_token(
+        &state.pool,
+        &user.id,
+        &actor.id,
+        &token_hash,
+        &expires_at,
+    )
+    .await?;
+
+    info!(
+        actor_user_id = %actor.id,
+        target_user_id = %user.id,
+        "Generated password reset link"
+    );
+
+    Ok(Json(GeneratePasswordResetLinkResponse {
+        reset_url: format!("/reset-password?token={raw_token}"),
+        expires_at,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +360,12 @@ pub struct UpdateUserRequest {
     pub password: Option<String>,
     pub display_name: Option<String>,
     pub is_active: Option<bool>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GeneratePasswordResetLinkResponse {
+    pub reset_url: String,
+    pub expires_at: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

@@ -1,4 +1,4 @@
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::{
     errors::{ApiError, AppResult},
@@ -40,6 +40,32 @@ pub async fn delete_session(pool: &SqlitePool, session_id: &str) -> AppResult<()
         .map_err(|error| ApiError::from_sqlx(error, "Unable to clear the session."))?;
 
     Ok(())
+}
+
+pub async fn delete_sessions_for_user(
+    pool: &SqlitePool,
+    user_id: &str,
+) -> AppResult<u64> {
+    let result = sqlx::query("DELETE FROM sessions WHERE user_id = ?1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .map_err(|error| ApiError::from_sqlx(error, "Unable to clear user sessions."))?;
+
+    Ok(result.rows_affected())
+}
+
+pub async fn delete_sessions_for_user_in_connection(
+    connection: &mut SqliteConnection,
+    user_id: &str,
+) -> AppResult<u64> {
+    let result = sqlx::query("DELETE FROM sessions WHERE user_id = ?1")
+        .bind(user_id)
+        .execute(&mut *connection)
+        .await
+        .map_err(|error| ApiError::from_sqlx(error, "Unable to clear user sessions."))?;
+
+    Ok(result.rows_affected())
 }
 
 /// Removes all sessions that have expired. Called opportunistically during login.

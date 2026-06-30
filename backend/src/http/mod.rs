@@ -53,6 +53,7 @@ pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
         .route("/api/openapi.json", get(docs::openapi_json))
         .route("/api/v1/auth/login", post(auth::login))
         .route("/api/v1/auth/logout", post(auth::logout))
+        .route("/api/v1/auth/reset-password", post(auth::reset_password))
         .route("/api/v1/me", get(auth::me))
         .route("/api/v1/me/permissions", get(auth::me_permissions))
         .route(
@@ -62,6 +63,10 @@ pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
         .route(
             "/api/v1/users/{id}",
             put(admin::update_user).delete(admin::delete_user),
+        )
+        .route(
+            "/api/v1/users/{id}/password-reset-link",
+            post(admin::generate_password_reset_link),
         )
         .route("/api/v1/permissions", get(admin::list_permissions))
         .route(

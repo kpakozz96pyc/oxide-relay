@@ -538,6 +538,163 @@ async fn admin_user_permissions_and_project_members_endpoints_work() {
 }
 
 #[tokio::test]
+async fn admin_can_generate_and_consume_password_reset_link() {
+    let harness = TestHarness::new().await;
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+    let user_id = harness
+        .insert_user(
+            "reset-user@example.com",
+            "old-password",
+            "Reset User",
+            true,
+        )
+        .await;
+
+    let reset_user_cookie = harness.login("reset-user@example.com", "old-password").await;
+
+    let generate = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/users/{user_id}/password-reset-link"))
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(generate.status(), StatusCode::OK);
+    let generate_body = json_body(generate).await;
+    let reset_url = generate_body["reset_url"].as_str().expect("reset url");
+    let token = reset_token_from_url(reset_url);
+    assert_eq!(generate_body["expires_at"].as_str().is_some(), true);
+
+    let second_generate = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/users/{user_id}/password-reset-link"))
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(second_generate.status(), StatusCode::OK);
+    let second_body = json_body(second_generate).await;
+    let second_token = reset_token_from_url(
+        second_body["reset_url"].as_str().expect("second reset url"),
+    );
+    assert_ne!(token, second_token);
+
+    let old_token_reset = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/reset-password")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "token": token,
+                        "password": "new-password-1"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(old_token_reset.status(), StatusCode::BAD_REQUEST);
+
+    let reset = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/reset-password")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "token": second_token,
+                        "password": "new-password-1"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(reset.status(), StatusCode::NO_CONTENT);
+
+    let old_session_me = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/me")
+                .header(header::COOKIE, reset_user_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(old_session_me.status(), StatusCode::UNAUTHORIZED);
+
+    let old_login = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "email": "reset-user@example.com",
+                        "password": "old-password"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(old_login.status(), StatusCode::UNAUTHORIZED);
+
+    let new_login = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "email": "reset-user@example.com",
+                        "password": "new-password-1"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(new_login.status(), StatusCode::OK);
+
+    let reused_token = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/reset-password")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "token": second_token,
+                        "password": "another-password"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(reused_token.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn create_user_rejects_invalid_email_and_weak_password() {
     let harness = TestHarness::new().await;
     let admin_cookie = harness.login("admin@example.com", "admin-password").await;
@@ -1243,6 +1400,13 @@ fn session_cookie(response: &axum::response::Response) -> String {
         .to_str()
         .expect("cookie string");
     value.split(';').next().expect("cookie pair").to_owned()
+}
+
+fn reset_token_from_url(url: &str) -> String {
+    url.split("token=")
+        .nth(1)
+        .expect("token query")
+        .to_owned()
 }
 
 async fn json_body(response: axum::response::Response) -> Value {

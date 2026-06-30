@@ -2,12 +2,13 @@ use axum::Json;
 use utoipa::OpenApi;
 
 use crate::{
-    auth::{AuthResponse, LoginRequest, MePermissionsResponse, MeResponse},
+    auth::{AuthResponse, LoginRequest, MePermissionsResponse, MeResponse, ResetPasswordRequest},
     errors::ErrorResponse,
     http::{
         admin::{
             AddProjectMemberRequest, CreateUserRequest, PermissionResponse, ProjectMemberResponse,
             ReplaceUserPermissionsRequest, UpdateUserRequest, UserResponse,
+            GeneratePasswordResetLinkResponse,
         },
         delivery::{
             DeliveryManifestNamespace, DeliveryManifestResponse, DeliveryQuery,
@@ -34,10 +35,12 @@ use crate::{
         crate::auth::logout,
         crate::auth::me,
         crate::auth::me_permissions,
+        crate::auth::reset_password,
         crate::http::admin::list_users,
         crate::http::admin::create_user,
         crate::http::admin::update_user,
         crate::http::admin::delete_user,
+        crate::http::admin::generate_password_reset_link,
         crate::http::admin::list_permissions,
         crate::http::admin::get_user_permissions,
         crate::http::admin::replace_user_permissions,
@@ -75,9 +78,11 @@ use crate::{
         AuthResponse,
         MeResponse,
         MePermissionsResponse,
+        ResetPasswordRequest,
         UserResponse,
         CreateUserRequest,
         UpdateUserRequest,
+        GeneratePasswordResetLinkResponse,
         PermissionResponse,
         ReplaceUserPermissionsRequest,
         AddProjectMemberRequest,

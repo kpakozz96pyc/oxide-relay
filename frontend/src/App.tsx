@@ -2,6 +2,7 @@ import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { LoginPage } from "./pages/LoginPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProjectPage } from "./pages/ProjectPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { UsersPage } from "./pages/UsersPage";
 import { AppLayout } from "./components/AppLayout";
 import { LoadingScreen } from "./components/LoadingScreen";
@@ -13,6 +14,7 @@ export function App() {
     <I18nProvider>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route element={<RequireAuth />}>
           <Route path="/" element={<Navigate to="/projects" replace />} />
           <Route path="/projects" element={<ProjectsPage />} />

@@ -2,8 +2,9 @@ use argon2::{
     Argon2,
     password_hash::{PasswordHasher, SaltString},
 };
-use rand_core::OsRng;
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use rand_core::{OsRng, RngCore};
+use sha2::{Digest, Sha256};
+use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::errors::{ApiError, AppResult};
 
@@ -17,6 +18,12 @@ pub fn now_utc() -> AppResult<String> {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .map_err(|error| ApiError::internal(format!("Unable to format current time: {error}")))
+}
+
+pub fn future_utc_minutes(minutes: i64) -> AppResult<String> {
+    (OffsetDateTime::now_utc() + Duration::minutes(minutes))
+        .format(&Rfc3339)
+        .map_err(|error| ApiError::internal(format!("Unable to format expiration time: {error}")))
 }
 
 /// Hashes a plaintext password using Argon2.
@@ -110,4 +117,33 @@ pub fn validate_password(value: &str) -> AppResult<&str> {
     }
 
     Ok(trimmed)
+}
+
+pub fn generate_secure_token_hex(byte_len: usize) -> String {
+    let mut bytes = vec![0_u8; byte_len];
+    OsRng.fill_bytes(&mut bytes);
+    hex_encode(&bytes)
+}
+
+pub fn sha256_hex(value: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    hex_encode(&hasher.finalize())
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(nibble_to_hex(byte >> 4));
+        output.push(nibble_to_hex(byte & 0x0f));
+    }
+    output
+}
+
+fn nibble_to_hex(nibble: u8) -> char {
+    match nibble {
+        0..=9 => (b'0' + nibble) as char,
+        10..=15 => (b'a' + (nibble - 10)) as char,
+        _ => unreachable!("nibble out of range"),
+    }
 }

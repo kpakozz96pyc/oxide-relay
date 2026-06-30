@@ -114,6 +114,11 @@ export type Permission = {
   description: string | null;
 };
 
+export type PasswordResetLinkResponse = {
+  reset_url: string;
+  expires_at: string;
+};
+
 export type CurrentPermissionsResponse = {
   permissions: string[];
 };

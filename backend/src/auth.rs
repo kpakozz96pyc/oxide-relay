@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::{
     app::AppState,
     errors::{ApiError, AppResult},
-    repository::{permissions, sessions},
+    repository::{password_resets, permissions, sessions, users},
     util,
 };
 
@@ -149,6 +149,53 @@ pub async fn me_permissions(
     Ok(Json(MePermissionsResponse {
         permissions: permission_codes,
     }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/reset-password",
+    request_body = ResetPasswordRequest,
+    responses(
+        (status = 204),
+        (status = 400, body = crate::errors::ErrorResponse)
+    )
+)]
+pub async fn reset_password(
+    State(state): State<AppState>,
+    Json(payload): Json<ResetPasswordRequest>,
+) -> AppResult<StatusCode> {
+    let token = util::required_non_empty(&payload.token, "Reset token is required.")?;
+    let password = util::validate_password(&payload.password)?;
+
+    let _ = password_resets::purge_expired(&state.pool).await;
+
+    let token_hash = util::sha256_hex(token);
+    let reset_token = password_resets::find_active_token_by_hash(&state.pool, &token_hash).await?;
+    let password_hash = util::hash_password(password)?;
+    let used_at = util::now_utc()?;
+
+    let mut transaction = state
+        .pool
+        .begin()
+        .await
+        .map_err(|error| ApiError::from_sqlx(error, "Unable to start password reset."))?;
+
+    users::update_password_hash_in_connection(
+        &mut transaction,
+        &reset_token.user_id,
+        &password_hash,
+        &used_at,
+    )
+    .await?;
+    password_resets::mark_token_used(&mut transaction, &reset_token.id, &used_at).await?;
+    sessions::delete_sessions_for_user_in_connection(&mut transaction, &reset_token.user_id).await?;
+
+    transaction
+        .commit()
+        .await
+        .map_err(|error| ApiError::from_sqlx(error, "Unable to complete password reset."))?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------
@@ -380,6 +427,12 @@ pub struct MeResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MePermissionsResponse {
     pub permissions: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ResetPasswordRequest {
+    pub token: String,
+    pub password: String,
 }
 
 #[derive(Debug, Clone, Serialize, FromRow, ToSchema)]

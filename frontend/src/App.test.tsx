@@ -59,6 +59,28 @@ function isMetadataRequest(pathname: string) {
   return pathname === "/api/v1/projects/oxide-relay/delivery-metadata";
 }
 
+const TEST_LOCALE_MESSAGES = {
+  "login.form.title": "login.form.title",
+  "projects.title": "projects.title",
+  "projects.visible_suffix": "projects.visible_suffix",
+  "project.table.new_key_placeholder": "project.table.new_key_placeholder",
+  "project.table.description_placeholder": "project.table.description_placeholder",
+  "project.table.value_placeholder": "project.table.value_placeholder",
+  "actions.save": "actions.save",
+  "project.badges.member_workspace": "project.badges.member_workspace",
+  "project.import.button": "project.import.button",
+  "project.members.title": "project.members.title",
+  "users.title": "users.title",
+  "users.reset_link.generate": "users.reset_link.generate",
+  "users.reset_link.generated_title": "users.reset_link.generated_title",
+  "users.permissions.selected_user": "users.permissions.selected_user",
+  "reset_password.form.title": "reset_password.form.title",
+  "reset_password.password": "reset_password.password",
+  "reset_password.confirm_password": "reset_password.confirm_password",
+  "reset_password.submit": "reset_password.submit",
+  "reset_password.success": "reset_password.success",
+} as const;
+
 describe("App routing", () => {
   it("redirects unauthenticated users to login", async () => {
     vi.stubGlobal(
@@ -67,7 +89,7 @@ describe("App routing", () => {
         const url = new URL(typeof input === "string" ? input : input.toString(), "http://localhost");
 
         if (isLocaleRequest(url.pathname)) {
-          return jsonResponse({});
+          return jsonResponse(TEST_LOCALE_MESSAGES);
         }
 
         if (isMetadataRequest(url.pathname)) {
@@ -99,7 +121,7 @@ describe("App routing", () => {
         const path = `${url.pathname}${url.search}`;
 
         if (isLocaleRequest(url.pathname)) {
-          return jsonResponse({});
+          return jsonResponse(TEST_LOCALE_MESSAGES);
         }
 
         if (isMetadataRequest(url.pathname)) {
@@ -166,7 +188,7 @@ describe("App routing", () => {
         const path = `${url.pathname}${url.search}`;
 
         if (isLocaleRequest(url.pathname)) {
-          return jsonResponse({});
+          return jsonResponse(TEST_LOCALE_MESSAGES);
         }
 
         if (isMetadataRequest(url.pathname)) {
@@ -362,7 +384,7 @@ describe("App routing", () => {
         const path = `${url.pathname}${url.search}`;
 
         if (isLocaleRequest(url.pathname)) {
-          return jsonResponse({});
+          return jsonResponse(TEST_LOCALE_MESSAGES);
         }
 
         if (isMetadataRequest(url.pathname)) {
@@ -470,5 +492,144 @@ describe("App routing", () => {
     expect(screen.getByRole("button", { name: "project.import.button" })).toBeDisabled();
     expect(screen.queryByPlaceholderText("project.table.new_key_placeholder")).not.toBeInTheDocument();
     expect(screen.queryByText("project.members.title")).not.toBeInTheDocument();
+  });
+
+  it("shows generated password reset link once on users page", async () => {
+    const user = userEvent.setup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(typeof input === "string" ? input : input.toString(), "http://localhost");
+        const method = init?.method ?? "GET";
+        const path = `${url.pathname}${url.search}`;
+
+        if (isLocaleRequest(url.pathname)) {
+          return jsonResponse(TEST_LOCALE_MESSAGES);
+        }
+
+        if (isMetadataRequest(url.pathname)) {
+          return jsonResponse({
+            version: "v1",
+            languages: [{ code: "en", name: "English" }],
+            namespaces: [{ name: "common" }],
+          });
+        }
+
+        if (path === "/api/v1/me") {
+          return jsonResponse({
+            user: {
+              id: "user-1",
+              email: "admin@example.com",
+              display_name: "Administrator",
+            },
+          });
+        }
+
+        if (path === "/api/v1/me/permissions") {
+          return jsonResponse({
+            permissions: ["ManageUsers", "ManagePermissions"],
+          });
+        }
+
+        if (path === "/api/v1/users") {
+          return jsonResponse([
+            {
+              id: "user-1",
+              email: "admin@example.com",
+              display_name: "Administrator",
+              is_active: true,
+              created_at: "2026-06-19T00:00:00Z",
+              updated_at: "2026-06-19T00:00:00Z",
+            },
+            {
+              id: "user-2",
+              email: "member@example.com",
+              display_name: "Member",
+              is_active: true,
+              created_at: "2026-06-19T00:00:00Z",
+              updated_at: "2026-06-19T00:00:00Z",
+            },
+          ]);
+        }
+
+        if (path === "/api/v1/permissions") {
+          return jsonResponse([]);
+        }
+
+        if (path === "/api/v1/users/user-1/permissions" || path === "/api/v1/users/user-2/permissions") {
+          return jsonResponse([]);
+        }
+
+        if (path === "/api/v1/users/user-1/password-reset-link" && method === "POST") {
+          return jsonResponse({
+            reset_url: "/reset-password?token=one-time-token",
+            expires_at: "2026-06-30T12:34:56Z",
+          });
+        }
+
+        throw new Error(`Unexpected request: ${method} ${path}`);
+      }),
+    );
+
+    renderApp(["/users"]);
+
+    expect(await screen.findByText("users.title")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "users.reset_link.generate" }));
+
+    expect(await screen.findByText("users.reset_link.generated_title")).toBeInTheDocument();
+    expect(screen.getByText("/reset-password?token=one-time-token")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("users.permissions.selected_user"), "user-2");
+
+    await waitFor(() => {
+      expect(screen.queryByText("/reset-password?token=one-time-token")).not.toBeInTheDocument();
+    });
+  });
+
+  it("submits a reset password token from the public page", async () => {
+    const user = userEvent.setup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(typeof input === "string" ? input : input.toString(), "http://localhost");
+        const method = init?.method ?? "GET";
+        const path = `${url.pathname}${url.search}`;
+
+        if (isLocaleRequest(url.pathname)) {
+          return jsonResponse(TEST_LOCALE_MESSAGES);
+        }
+
+        if (isMetadataRequest(url.pathname)) {
+          return jsonResponse({
+            version: "v1",
+            languages: [{ code: "en", name: "English" }],
+            namespaces: [{ name: "common" }],
+          });
+        }
+
+        if (path === "/api/v1/auth/reset-password" && method === "POST") {
+          return new Response(null, { status: 204 });
+        }
+
+        if (path === "/api/v1/me") {
+          return unauthorizedResponse();
+        }
+
+        throw new Error(`Unexpected request: ${method} ${path}`);
+      }),
+    );
+
+    renderApp(["/reset-password?token=valid-token"]);
+
+    expect(await screen.findByText("reset_password.form.title")).toBeInTheDocument();
+
+    const passwordInputs = screen.getAllByLabelText(/reset_password\.(password|confirm_password)/);
+    await user.type(passwordInputs[0], "new-password-1");
+    await user.type(passwordInputs[1], "new-password-1");
+    await user.click(screen.getByRole("button", { name: "reset_password.submit" }));
+
+    expect(await screen.findByText("reset_password.success")).toBeInTheDocument();
   });
 });

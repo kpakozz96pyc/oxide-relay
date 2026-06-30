@@ -1,6 +1,15 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiPost, apiPut, apiDelete, buildErrorMessage, User, Permission } from "../api";
+import {
+  apiGet,
+  apiPost,
+  apiPut,
+  apiDelete,
+  buildErrorMessage,
+  type User,
+  type Permission,
+  type PasswordResetLinkResponse,
+} from "../api";
 import { usePermissionSet } from "../hooks/usePermissionSet";
 import { useTranslation } from "../i18n";
 import { LoadingScreen } from "../components/LoadingScreen";
@@ -16,6 +25,7 @@ export function UsersPage() {
   const [editDisplayName, setEditDisplayName] = useState("");
   const [editPassword, setEditPassword] = useState("");
   const [editIsActive, setEditIsActive] = useState(true);
+  const [generatedResetLink, setGeneratedResetLink] = useState<PasswordResetLinkResponse | null>(null);
   const queryClient = useQueryClient();
   const permissionSet = usePermissionSet();
   const { t } = useTranslation();
@@ -53,6 +63,7 @@ export function UsersPage() {
       setEditDisplayName(selectedUser.display_name);
       setEditPassword("");
       setEditIsActive(selectedUser.is_active);
+      setGeneratedResetLink(null);
     }
   }, [selectedUserId, usersQuery.data]);
 
@@ -114,6 +125,14 @@ export function UsersPage() {
     },
   });
 
+  const generateResetLinkMutation = useMutation({
+    mutationFn: async () =>
+      apiPost<PasswordResetLinkResponse>(`/api/v1/users/${selectedUserId}/password-reset-link`, undefined),
+    onSuccess: (response) => {
+      setGeneratedResetLink(response);
+    },
+  });
+
   if (!canManageUsers && !canManagePermissions) {
     return (
       <ErrorCard
@@ -155,6 +174,9 @@ export function UsersPage() {
       ) : null}
       {deleteUserMutation.isError ? (
         <div className="banner error">{buildErrorMessage(deleteUserMutation.error)}</div>
+      ) : null}
+      {generateResetLinkMutation.isError ? (
+        <div className="banner error">{buildErrorMessage(generateResetLinkMutation.error)}</div>
       ) : null}
 
       <div className="workspace-grid">
@@ -264,6 +286,48 @@ export function UsersPage() {
             <input checked={editIsActive} onChange={(event) => setEditIsActive(event.target.checked)} type="checkbox" />
             <span>{t("users.update.is_active")}</span>
           </label>
+          <div className="action-row">
+            <button
+              className="button ghost"
+              disabled={!selectedUserId || generateResetLinkMutation.isPending || !canManageUsers}
+              onClick={() => {
+                setGeneratedResetLink(null);
+                generateResetLinkMutation.mutate();
+              }}
+            >
+              {generateResetLinkMutation.isPending
+                ? t("users.reset_link.pending")
+                : t("users.reset_link.generate")}
+            </button>
+          </div>
+          {generatedResetLink ? (
+            <div className="banner info stack gap-sm">
+              <strong>{t("users.reset_link.generated_title")}</strong>
+              <span>{t("users.reset_link.one_time_notice")}</span>
+              <code className="inline-code-block">{generatedResetLink.reset_url}</code>
+              <span>{`${t("users.reset_link.expires_at")} ${generatedResetLink.expires_at}`}</span>
+              <div className="action-row">
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(
+                      `${window.location.origin}${generatedResetLink.reset_url}`,
+                    );
+                  }}
+                >
+                  {t("actions.copy")}
+                </button>
+                <button
+                  className="button ghost"
+                  type="button"
+                  onClick={() => setGeneratedResetLink(null)}
+                >
+                  {t("actions.clear")}
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div className="action-row">
             <button
               className="button secondary"

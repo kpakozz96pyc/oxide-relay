@@ -8,6 +8,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import enMessages from "./locales/en.json";
+import ruMessages from "./locales/ru.json";
+import srbMessages from "./locales/srb.json";
 
 type TranslationMessages = Record<string, string>;
 type DeliveryMetadataResponse = {
@@ -30,7 +33,16 @@ const STORAGE_KEY = "oxiderelay.language";
 const OXIDERELAY_PROJECT_SLUG = "oxide-relay";
 const OXIDERELAY_ENVIRONMENT = "production";
 const OXIDERELAY_NAMESPACE = "common";
-const DEFAULT_SUPPORTED_LANGUAGES = [{ code: "en", label: "EN" }];
+const LOCAL_MESSAGES: Record<string, TranslationMessages> = {
+  en: enMessages,
+  ru: ruMessages,
+  srb: srbMessages,
+};
+const DEFAULT_SUPPORTED_LANGUAGES = [
+  { code: "en", label: "English" },
+  { code: "ru", label: "Russian" },
+  { code: "srb", label: "Serbian" },
+];
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
@@ -69,9 +81,13 @@ function readStoredLanguage(): string {
   return storedLanguage || DEFAULT_LANGUAGE;
 }
 
+function getLocalMessages(language: string): TranslationMessages {
+  return LOCAL_MESSAGES[language] ?? LOCAL_MESSAGES[DEFAULT_LANGUAGE] ?? {};
+}
+
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [language, setLanguageState] = useState(readStoredLanguage);
-  const [messages, setMessages] = useState<TranslationMessages>({});
+  const [messages, setMessages] = useState<TranslationMessages>(() => getLocalMessages(readStoredLanguage()));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [supportedLanguages, setSupportedLanguages] = useState(DEFAULT_SUPPORTED_LANGUAGES);
@@ -142,9 +158,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     }
 
     const controller = new AbortController();
+    const localMessages = getLocalMessages(language);
     setIsLoading(true);
     setError(null);
-    setMessages({});
+    setMessages(localMessages);
 
     void fetch(buildNamespaceUrl(language, version ?? undefined), { signal: controller.signal })
       .then(async (response) => {
@@ -152,7 +169,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
           throw new Error(`translation request failed with status ${response.status}`);
         }
         const payload = (await response.json()) as TranslationMessages;
-        const nextMessages = payload ?? {};
+        const nextMessages = { ...localMessages, ...(payload ?? {}) };
         cacheRef.current[cacheKey] = nextMessages;
         setMessages(nextMessages);
         setIsLoading(false);
@@ -161,11 +178,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         if (controller.signal.aborted) {
           return;
         }
-        setMessages({});
+        setMessages(localMessages);
         setIsLoading(false);
-        setError(
-          loadError instanceof Error ? loadError.message : "translations.load_failed",
-        );
+        setError(loadError instanceof Error ? loadError.message : "translations.load_failed");
       });
 
     return () => controller.abort();
@@ -173,9 +188,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const t = useCallback(
     (key: string) => {
-      return messages[key] ?? key;
+      return messages[key] ?? getLocalMessages(language)[key] ?? key;
     },
-    [messages],
+    [language, messages],
   );
 
   const value = useMemo<I18nContextValue>(

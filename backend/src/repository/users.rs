@@ -1,4 +1,4 @@
-use sqlx::{FromRow, SqlitePool};
+use sqlx::{FromRow, SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 use crate::{
@@ -59,6 +59,21 @@ pub async fn find_by_id(pool: &SqlitePool, user_id: &str) -> AppResult<UserRecor
     sqlx::query_as::<_, UserRecord>(
         r#"
         SELECT id, email, display_name, is_active, created_at, updated_at
+        FROM users
+        WHERE id = ?1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to load the user."))?
+    .ok_or_else(|| ApiError::not_found("User was not found."))
+}
+
+pub async fn find_row_by_id(pool: &SqlitePool, user_id: &str) -> AppResult<UserRow> {
+    sqlx::query_as::<_, UserRow>(
+        r#"
+        SELECT id, email, password_hash, display_name, is_active
         FROM users
         WHERE id = ?1
         "#,
@@ -179,6 +194,62 @@ pub async fn delete(pool: &SqlitePool, user_id: &str) -> AppResult<()> {
         .execute(pool)
         .await
         .map_err(|e| ApiError::from_sqlx(e, "Unable to delete the user."))?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::not_found("User was not found."));
+    }
+
+    Ok(())
+}
+
+pub async fn update_password_hash(
+    pool: &SqlitePool,
+    user_id: &str,
+    password_hash: &str,
+) -> AppResult<()> {
+    let updated_at = now_utc()?;
+    let result = sqlx::query(
+        r#"
+        UPDATE users
+        SET password_hash = ?1,
+            updated_at = ?2
+        WHERE id = ?3
+        "#,
+    )
+    .bind(password_hash)
+    .bind(&updated_at)
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to update the user password."))?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::not_found("User was not found."));
+    }
+
+    Ok(())
+}
+
+pub async fn update_password_hash_in_connection(
+    connection: &mut SqliteConnection,
+    user_id: &str,
+    password_hash: &str,
+    updated_at: &str,
+) -> AppResult<()> {
+    let result = sqlx::query(
+        r#"
+        UPDATE users
+        SET password_hash = ?1,
+            updated_at = ?2
+        WHERE id = ?3
+        "#,
+    )
+    .bind(password_hash)
+    .bind(updated_at)
+    .bind(user_id)
+    .execute(&mut *connection)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to update the user password."))?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::not_found("User was not found."));

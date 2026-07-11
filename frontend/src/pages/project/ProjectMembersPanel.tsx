@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { X } from "lucide-react";
 import { ProjectMember, apiDelete, apiGet, apiPost, buildErrorMessage } from "../../api";
 
 export function ProjectMembersPanel({
@@ -14,6 +15,7 @@ export function ProjectMembersPanel({
   projectOwnerId: string;
 }) {
   const queryClient = useQueryClient();
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [memberUserId, setMemberUserId] = useState("");
 
   const membersQuery = useQuery({
@@ -29,6 +31,7 @@ export function ProjectMembersPanel({
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "members"] });
+      setIsCreateDialogOpen(false);
       setMemberUserId("");
     },
   });
@@ -92,7 +95,14 @@ export function ProjectMembersPanel({
               Manage membership by user ID. The owner is always retained separately from regular members.
             </p>
           </div>
-          <span className="badge">{members.length}</span>
+          <div className="action-row">
+            <span className="badge">{members.length}</span>
+            {canManageMembers ? (
+              <button className="button primary" onClick={() => setIsCreateDialogOpen(true)} type="button">
+                Add member
+              </button>
+            ) : null}
+          </div>
         </header>
 
         {membersQuery.isLoading ? <p className="muted">Loading project members...</p> : null}
@@ -107,24 +117,7 @@ export function ProjectMembersPanel({
         ) : null}
 
         {canManageMembers ? (
-          <div className="project-inline-form">
-            <label className="field">
-              <span>User ID</span>
-              <input
-                onChange={(event) => setMemberUserId(event.target.value)}
-                placeholder="Enter a user ID"
-                value={memberUserId}
-              />
-            </label>
-            <button
-              className="button secondary"
-              disabled={addMemberMutation.isPending || !memberUserId.trim()}
-              onClick={() => addMemberMutation.mutate()}
-              type="button"
-            >
-              {addMemberMutation.isPending ? "Adding..." : "Add member"}
-            </button>
-          </div>
+          <p className="muted">Add members through a dedicated modal to keep the access workspace compact.</p>
         ) : (
           <div className="banner info">You can view members, but only the owner or a user with member-management permission can change them.</div>
         )}
@@ -144,7 +137,11 @@ export function ProjectMembersPanel({
                 <button
                   className="button ghost danger"
                   disabled={removeMemberMutation.isPending || !canManageMembers}
-                  onClick={() => removeMemberMutation.mutate(member.id)}
+                  onClick={() => {
+                    if (window.confirm(`Remove "${member.display_name}" from this project?`)) {
+                      removeMemberMutation.mutate(member.id);
+                    }
+                  }}
                   type="button"
                 >
                   Remove
@@ -154,6 +151,91 @@ export function ProjectMembersPanel({
           ))}
         </div>
       </article>
+
+      <AddProjectMemberDialog
+        canManageMembers={canManageMembers}
+        error={addMemberMutation.error}
+        isPending={addMemberMutation.isPending}
+        onChangeUserId={setMemberUserId}
+        onClose={() => {
+          setIsCreateDialogOpen(false);
+          addMemberMutation.reset();
+        }}
+        onSubmit={() => addMemberMutation.mutate()}
+        open={isCreateDialogOpen}
+        userId={memberUserId}
+      />
+    </div>
+  );
+}
+
+function AddProjectMemberDialog({
+  open,
+  userId,
+  isPending,
+  error,
+  canManageMembers,
+  onChangeUserId,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  userId: string;
+  isPending: boolean;
+  error: unknown;
+  canManageMembers: boolean;
+  onChangeUserId: (value: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  useEffect(() => {
+    if (!open) {
+      onChangeUserId("");
+    }
+  }, [open, onChangeUserId]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="add-project-member-title">
+      <div className="modal-card panel stack gap-md">
+        <header className="panel-header">
+          <div className="stack gap-sm">
+            <h2 id="add-project-member-title">Add member</h2>
+            <p className="panel-copy">Grant project membership by user ID without leaving the current access workspace.</p>
+          </div>
+          <button aria-label="Close add member dialog" className="button ghost" onClick={onClose} type="button">
+            <X size={16} />
+          </button>
+        </header>
+
+        {error ? <div className="banner error">{buildErrorMessage(error)}</div> : null}
+
+        <label className="field">
+          <span>User ID</span>
+          <input
+            onChange={(event) => onChangeUserId(event.target.value)}
+            placeholder="Enter a user ID"
+            value={userId}
+          />
+        </label>
+
+        <div className="action-row">
+          <button
+            className="button primary"
+            disabled={isPending || !canManageMembers || !userId.trim()}
+            onClick={onSubmit}
+            type="button"
+          >
+            {isPending ? "Adding..." : "Add member"}
+          </button>
+          <button className="button ghost" onClick={onClose} type="button">
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

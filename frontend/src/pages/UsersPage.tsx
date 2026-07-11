@@ -115,7 +115,7 @@ export function UsersPage() {
   const projectCatalog = projectCatalogQuery.data ?? [];
 
   return (
-    <section className="page project-settings-page users-page">
+    <section className="page workspace-page project-settings-page users-page">
       <header className="page-header">
         <div>
           <p className="eyebrow">{t("users.eyebrow")}</p>

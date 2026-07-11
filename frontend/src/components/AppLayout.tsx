@@ -23,11 +23,11 @@ export function AppLayout(props: {
   return (
     <div className="admin-shell">
       <aside className="sidebar">
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
+        <div className="shell-block">
           <div className="brand-block">
             <p className="eyebrow">{t("app.name")}</p>
             <h1>{t("layout.console.title")}</h1>
-            <p className="sidebar-copy" style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)" }}>
+            <p className="sidebar-copy shell-copy">
               {t("layout.console.description")}
             </p>
           </div>
@@ -57,7 +57,7 @@ export function AppLayout(props: {
         </div>
 
         <div className="user-card">
-          <label className="field" style={{ marginBottom: "var(--space-4)" }}>
+          <label className="field locale-switcher app-user-card-language">
             <span>{t("layout.language.label")}</span>
             <select value={language} onChange={(event) => setLanguage(event.target.value)}>
               {supportedLanguages.map((item) => (
@@ -67,13 +67,12 @@ export function AppLayout(props: {
               ))}
             </select>
           </label>
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-            <strong style={{ fontSize: "var(--text-sm)" }}>{props.user.display_name}</strong>
+          <div className="user-meta-stack">
+            <strong>{props.user.display_name}</strong>
             <span>{props.user.email}</span>
           </div>
           <button
-            className="button ghost"
-            style={{ width: "100%", gap: "var(--space-2)" }}
+            className="button ghost full-width with-icon-gap"
             onClick={async () => {
               try {
                 await props.onLogout();
@@ -91,20 +90,12 @@ export function AppLayout(props: {
       </aside>
 
       <main className="content-shell">
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "var(--space-4)",
-            marginBottom: "var(--space-6)",
-          }}
-        >
+        <div className="shell-page-header">
           <div>
             <p className="eyebrow">{t("layout.header.eyebrow")}</p>
             <strong>{t("layout.header.title")}</strong>
           </div>
-          <label className="field small" style={{ minWidth: 120 }}>
+          <label className="field small locale-switcher">
             <span>{t("layout.language.label")}</span>
             <select value={language} onChange={(event) => setLanguage(event.target.value)}>
               {supportedLanguages.map((item) => (

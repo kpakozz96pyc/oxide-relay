@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { X } from "lucide-react";
 import {
   PasswordResetLinkResponse,
   Permission,
@@ -54,6 +55,7 @@ export function SelectedUserPanel({
   const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
   const [permissionsDraft, setPermissionsDraft] = useState<string[]>([]);
   const [permissionsSuccess, setPermissionsSuccess] = useState<string | null>(null);
+  const [isAddProjectAccessDialogOpen, setIsAddProjectAccessDialogOpen] = useState(false);
   const [selectedProjectSlugToAdd, setSelectedProjectSlugToAdd] = useState("");
   const [securityPassword, setSecurityPassword] = useState("");
   const [securitySuccess, setSecuritySuccess] = useState<string | null>(null);
@@ -130,6 +132,7 @@ export function SelectedUserPanel({
       }
       await queryClient.invalidateQueries({ queryKey: ["user-project-access", selectedUser.id] });
       await queryClient.invalidateQueries({ queryKey: ["users-summary"] });
+      setIsAddProjectAccessDialogOpen(false);
       setSelectedProjectSlugToAdd("");
     },
   });
@@ -468,7 +471,11 @@ export function SelectedUserPanel({
                     <button
                       className="button ghost danger"
                       disabled={!item.can_manage_access || removeProjectAccessMutation.isPending}
-                      onClick={() => removeProjectAccessMutation.mutate(item.project_slug)}
+                      onClick={() => {
+                        if (window.confirm(`Remove access to "${item.project_name}" for "${selectedUser.display_name}"?`)) {
+                          removeProjectAccessMutation.mutate(item.project_slug);
+                        }
+                      }}
                       type="button"
                     >
                       Remove access
@@ -480,32 +487,42 @@ export function SelectedUserPanel({
           </section>
 
           <section className="permission-section-card">
-            <h3>Add project access</h3>
+            <header className="panel-header">
+              <div className="stack gap-sm">
+                <h3>Add project access</h3>
+                <p className="panel-copy">Grant membership access without mixing it into the current access list.</p>
+              </div>
+              {addableProjects.length > 0 && canManageUsers ? (
+                <button
+                  className="button primary"
+                  onClick={() => setIsAddProjectAccessDialogOpen(true)}
+                  type="button"
+                >
+                  Add project access
+                </button>
+              ) : null}
+            </header>
             {addableProjects.length === 0 ? (
               <p className="muted">No manageable projects without access are available for this user.</p>
             ) : (
-              <div className="project-inline-form">
-                <label className="field">
-                  <span>Project</span>
-                  <select value={selectedProjectSlugToAdd} onChange={(event) => setSelectedProjectSlugToAdd(event.target.value)}>
-                    {addableProjects.map((item) => (
-                      <option key={item.project_id} value={item.project_slug}>
-                        {item.project_name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  className="button secondary"
-                  disabled={!selectedProjectSlugToAdd || addProjectAccessMutation.isPending}
-                  onClick={() => addProjectAccessMutation.mutate()}
-                  type="button"
-                >
-                  {addProjectAccessMutation.isPending ? "Adding..." : "Add project access"}
-                </button>
-              </div>
+              <p className="muted">Use the modal to select one manageable project and add membership access.</p>
             )}
           </section>
+
+          <AddProjectAccessDialog
+            canManageUsers={canManageUsers}
+            error={addProjectAccessMutation.error}
+            isPending={addProjectAccessMutation.isPending}
+            onChangeProjectSlug={setSelectedProjectSlugToAdd}
+            onClose={() => {
+              setIsAddProjectAccessDialogOpen(false);
+              addProjectAccessMutation.reset();
+            }}
+            onSubmit={() => addProjectAccessMutation.mutate()}
+            open={isAddProjectAccessDialogOpen}
+            projects={addableProjects}
+            selectedProjectSlug={selectedProjectSlugToAdd}
+          />
         </div>
       ) : null}
 
@@ -590,6 +607,89 @@ export function SelectedUserPanel({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function AddProjectAccessDialog({
+  open,
+  projects,
+  selectedProjectSlug,
+  isPending,
+  error,
+  canManageUsers,
+  onChangeProjectSlug,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  projects: UserProjectAccess[];
+  selectedProjectSlug: string;
+  isPending: boolean;
+  error: unknown;
+  canManageUsers: boolean;
+  onChangeProjectSlug: (value: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  useEffect(() => {
+    if (!open) {
+      onChangeProjectSlug("");
+      return;
+    }
+
+    if (!selectedProjectSlug && projects[0]) {
+      onChangeProjectSlug(projects[0].project_slug);
+    }
+  }, [open, onChangeProjectSlug, projects, selectedProjectSlug]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="add-project-access-title">
+      <div className="modal-card panel stack gap-md">
+        <header className="panel-header">
+          <div className="stack gap-sm">
+            <h2 id="add-project-access-title">Add project access</h2>
+            <p className="panel-copy">Grant project membership to the selected user without leaving the inspector.</p>
+          </div>
+          <button aria-label="Close add project access dialog" className="button ghost" onClick={onClose} type="button">
+            <X size={16} />
+          </button>
+        </header>
+
+        {error ? <div className="banner error">{buildErrorMessage(error)}</div> : null}
+
+        <label className="field">
+          <span>Project</span>
+          <select
+            onChange={(event) => onChangeProjectSlug(event.target.value)}
+            value={selectedProjectSlug}
+          >
+            {projects.map((item) => (
+              <option key={item.project_id} value={item.project_slug}>
+                {item.project_name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="action-row">
+          <button
+            className="button primary"
+            disabled={!canManageUsers || !selectedProjectSlug || isPending}
+            onClick={onSubmit}
+            type="button"
+          >
+            {isPending ? "Adding..." : "Add project access"}
+          </button>
+          <button className="button ghost" onClick={onClose} type="button">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

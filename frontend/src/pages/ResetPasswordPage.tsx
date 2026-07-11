@@ -54,26 +54,14 @@ export function ResetPasswordPage() {
 
       <div className="login-form-shell">
         <div className="login-form-inner">
-          <div
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: "var(--radius-md)",
-              background: "var(--surface-raised)",
-              border: "1px solid var(--border-strong)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "var(--white)",
-            }}
-          >
+          <div className="auth-icon-chip">
             <Lock size={20} />
           </div>
 
-          <h1 className="panel-title" style={{ marginTop: "var(--space-4)" }}>
+          <h1 className="panel-title">
             {t("reset_password.form.title")}
           </h1>
-          <p className="panel-copy" style={{ marginBottom: "var(--space-6)" }}>
+          <p className="panel-copy auth-form-copy">
             {t("reset_password.form.description")}
           </p>
 

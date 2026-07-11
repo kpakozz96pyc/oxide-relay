@@ -85,7 +85,7 @@ export function ProjectPage() {
   const canViewMembers = project.is_owner || permissionSet.has("ManageProjectMembers");
 
   return (
-    <section className="page project-settings-page">
+    <section className="page workspace-page project-settings-page">
       <div className="project-breadcrumbs" aria-label="Breadcrumb">
         <Link to="/projects">Projects</Link>
         <span>/</span>

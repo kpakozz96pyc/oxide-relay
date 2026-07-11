@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
-import type { TranslationGridRow } from "./api";
+import type { Project, TranslationGridRow } from "./api";
 
 function renderApp(initialEntries: string[]) {
   const client = new QueryClient({
@@ -162,23 +162,18 @@ describe("App routing", () => {
     });
   });
 
-  it("creates a translation from the project workspace", async () => {
+  it("renders project settings tabs and updates project settings", async () => {
     const user = userEvent.setup();
-    const translationRows: TranslationGridRow[] = [
-      {
-        representative_translation_id: "translation-1",
-        translation_key_id: "key-1",
-        key: "button.save",
-        description: "Initial value",
-        namespace: "common",
-        values: {
-          en: {
-            id: "translation-1",
-            value: "Save",
-          },
-        },
-      },
-    ];
+    let currentProject: Project = {
+      id: "project-1",
+      name: "Demo Project",
+      slug: "demo-project",
+      description: "Project for UI tests",
+      owner_user_id: "user-1",
+      created_at: "2026-06-19T00:00:00Z",
+      updated_at: "2026-06-19T00:00:00Z",
+      is_owner: true,
+    };
 
     vi.stubGlobal(
       "fetch",
@@ -213,28 +208,13 @@ describe("App routing", () => {
           return jsonResponse({
             permissions: [
               "EditProjects",
-              "EditTranslations",
-              "DeleteTranslations",
-              "ImportTranslations",
               "ManageProjectMembers",
-              "ReadTranslations",
-              "ReadProduction",
-              "EditProduction",
             ],
           });
         }
 
         if (path === "/api/v1/projects/demo-project") {
-          return jsonResponse({
-            id: "project-1",
-            name: "Demo Project",
-            slug: "demo-project",
-            description: "Project for UI tests",
-            owner_user_id: "user-1",
-            created_at: "2026-06-19T00:00:00Z",
-            updated_at: "2026-06-19T00:00:00Z",
-            is_owner: true,
-          });
+          return jsonResponse(currentProject);
         }
 
         if (path === "/api/v1/projects/demo-project/languages") {
@@ -305,7 +285,164 @@ describe("App routing", () => {
           });
         }
 
-        if (path === "/api/v1/projects/demo-project/translations/grid?environment=production&namespace=common&languages=en&search=&page=1&page_size=25") {
+        if (url.pathname === "/api/v1/projects/demo-project" && method === "PUT") {
+          const body = JSON.parse(String(init?.body)) as {
+            name: string;
+            slug: string;
+            description?: string;
+          };
+
+          currentProject = {
+            ...currentProject,
+            name: body.name,
+            slug: body.slug,
+            description: body.description ?? null,
+            updated_at: "2026-06-19T01:00:00Z",
+          };
+          return jsonResponse(currentProject);
+        }
+
+        throw new Error(`Unexpected request: ${method} ${path}`);
+      }),
+    );
+
+    renderApp(["/projects/demo-project"]);
+
+    expect(await screen.findByRole("heading", { name: "Demo Project" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "General" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Access" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Danger Zone" })).toBeInTheDocument();
+    expect(screen.getByText("Changing the slug may break existing delivery URLs.")).toBeInTheDocument();
+
+    const saveButton = screen.getByRole("button", { name: "Save changes" });
+    expect(saveButton).toBeDisabled();
+
+    await user.clear(screen.getByLabelText("Project name"));
+    await user.type(screen.getByLabelText("Project name"), "Relay Console");
+    expect(saveButton).toBeEnabled();
+
+    await user.click(saveButton);
+
+    expect(await screen.findByText("Project settings saved.")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Relay Console")).toBeInTheDocument();
+  });
+
+  it("creates a translation from the translations tab", async () => {
+    const user = userEvent.setup();
+    const translationRows: TranslationGridRow[] = [
+      {
+        representative_translation_id: "translation-1",
+        translation_key_id: "key-1",
+        key: "button.save",
+        description: "Initial value",
+        namespace: "common",
+        values: {
+          en: {
+            id: "translation-1",
+            value: "Save",
+          },
+        },
+      },
+    ];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(typeof input === "string" ? input : input.toString(), "http://localhost");
+        const method = init?.method ?? "GET";
+        const path = `${url.pathname}${url.search}`;
+
+        if (isLocaleRequest(url.pathname)) {
+          return jsonResponse(TEST_LOCALE_MESSAGES);
+        }
+
+        if (isMetadataRequest(url.pathname)) {
+          return jsonResponse({
+            version: "v1",
+            languages: [{ code: "en", name: "English" }],
+            namespaces: [{ name: "common" }],
+          });
+        }
+
+        if (path === "/api/v1/me") {
+          return jsonResponse({
+            user: {
+              id: "user-1",
+              email: "admin@example.com",
+              display_name: "Administrator",
+            },
+          });
+        }
+
+        if (path === "/api/v1/me/permissions") {
+          return jsonResponse({
+            permissions: [
+              "EditProjects",
+              "EditTranslations",
+              "DeleteTranslations",
+              "ImportTranslations",
+              "ReadTranslations",
+              "ReadProduction",
+              "EditProduction",
+            ],
+          });
+        }
+
+        if (path === "/api/v1/projects/demo-project") {
+          return jsonResponse({
+            id: "project-1",
+            name: "Demo Project",
+            slug: "demo-project",
+            description: "Project for UI tests",
+            owner_user_id: "user-1",
+            created_at: "2026-06-19T00:00:00Z",
+            updated_at: "2026-06-19T00:00:00Z",
+            is_owner: true,
+          });
+        }
+
+        if (path === "/api/v1/projects/demo-project/languages") {
+          return jsonResponse([
+            {
+              id: "language-1",
+              project_id: "project-1",
+              code: "en",
+              name: "English",
+              created_at: "2026-06-19T00:00:00Z",
+              updated_at: "2026-06-19T00:00:00Z",
+            },
+          ]);
+        }
+
+        if (path === "/api/v1/projects/demo-project/namespaces") {
+          return jsonResponse([
+            {
+              id: "namespace-1",
+              project_id: "project-1",
+              name: "common",
+              created_at: "2026-06-19T00:00:00Z",
+              updated_at: "2026-06-19T00:00:00Z",
+            },
+          ]);
+        }
+
+        if (path === "/api/v1/projects/demo-project/environments") {
+          return jsonResponse([
+            {
+              id: "environment-1",
+              project_id: "project-1",
+              name: "Production",
+              slug: "production",
+              created_at: "2026-06-19T00:00:00Z",
+              updated_at: "2026-06-19T00:00:00Z",
+            },
+          ]);
+        }
+
+        if (
+          path ===
+          "/api/v1/projects/demo-project/translations/grid?environment=production&namespace=common&languages=en&search=&page=1&page_size=25"
+        ) {
           return jsonResponse({
             items: translationRows,
             total: translationRows.length,
@@ -362,7 +499,7 @@ describe("App routing", () => {
 
     renderApp(["/projects/demo-project"]);
 
-    expect(await screen.findByText("Demo Project")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Translations" }));
     expect(await screen.findByText("button.save")).toBeInTheDocument();
 
     await user.type(screen.getByPlaceholderText("project.table.new_key_placeholder"), "cta.publish");
@@ -375,7 +512,9 @@ describe("App routing", () => {
     expect(screen.getByDisplayValue("Publish")).toBeInTheDocument();
   });
 
-  it("keeps restricted translation actions unavailable for a member without edit permissions", async () => {
+  it("keeps project settings read-only for a member without edit permissions", async () => {
+    const user = userEvent.setup();
+
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -407,7 +546,7 @@ describe("App routing", () => {
 
         if (path === "/api/v1/me/permissions") {
           return jsonResponse({
-            permissions: ["ReadTranslations", "ReadProduction"],
+            permissions: [],
           });
         }
 
@@ -473,28 +612,24 @@ describe("App routing", () => {
           });
         }
 
-        if (path === "/api/v1/projects/demo-project/translations/grid?environment=production&namespace=common&languages=en&search=&page=1&page_size=25") {
-          return jsonResponse({
-            items: [],
-            total: 0,
-            page: 1,
-            page_size: 25,
-          });
-        }
-
         throw new Error(`Unexpected request: ${method} ${path}`);
       }),
     );
 
     renderApp(["/projects/demo-project"]);
 
-    expect(await screen.findByText("project.badges.member_workspace")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "project.import.button" })).toBeDisabled();
-    expect(screen.queryByPlaceholderText("project.table.new_key_placeholder")).not.toBeInTheDocument();
-    expect(screen.queryByText("project.members.title")).not.toBeInTheDocument();
+    expect(await screen.findByText("Member workspace")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Access" }));
+
+    expect(
+      await screen.findByText(/Member management is only visible to the project owner/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Project Members")).not.toBeInTheDocument();
   });
 
-  it("shows generated password reset link once on users page", async () => {
+  it("shows generated password reset link in the user security inspector", async () => {
     const user = userEvent.setup();
 
     vi.stubGlobal(
@@ -532,7 +667,7 @@ describe("App routing", () => {
           });
         }
 
-        if (path === "/api/v1/users") {
+        if (path === "/api/v1/users/summary") {
           return jsonResponse([
             {
               id: "user-1",
@@ -541,6 +676,9 @@ describe("App routing", () => {
               is_active: true,
               created_at: "2026-06-19T00:00:00Z",
               updated_at: "2026-06-19T00:00:00Z",
+              direct_permissions_count: 2,
+              project_access_count: 1,
+              selected_project_relation: null,
             },
             {
               id: "user-2",
@@ -549,6 +687,9 @@ describe("App routing", () => {
               is_active: true,
               created_at: "2026-06-19T00:00:00Z",
               updated_at: "2026-06-19T00:00:00Z",
+              direct_permissions_count: 0,
+              project_access_count: 0,
+              selected_project_relation: null,
             },
           ]);
         }
@@ -559,6 +700,45 @@ describe("App routing", () => {
 
         if (path === "/api/v1/users/user-1/permissions" || path === "/api/v1/users/user-2/permissions") {
           return jsonResponse([]);
+        }
+
+        if (path === "/api/v1/projects/catalog") {
+          return jsonResponse([
+            {
+              id: "project-1",
+              name: "Website",
+              slug: "website",
+              owner_user_id: "user-1",
+            },
+          ]);
+        }
+
+        if (path === "/api/v1/users/user-1/project-access") {
+          return jsonResponse([
+            {
+              project_id: "project-1",
+              project_name: "Website",
+              project_slug: "website",
+              owner_user_id: "user-1",
+              relation: "owner",
+              access_added_at: null,
+              can_manage_access: true,
+            },
+          ]);
+        }
+
+        if (path === "/api/v1/users/user-2/project-access") {
+          return jsonResponse([
+            {
+              project_id: "project-1",
+              project_name: "Website",
+              project_slug: "website",
+              owner_user_id: "user-1",
+              relation: "none",
+              access_added_at: null,
+              can_manage_access: true,
+            },
+          ]);
         }
 
         if (path === "/api/v1/users/user-1/password-reset-link" && method === "POST") {
@@ -574,13 +754,14 @@ describe("App routing", () => {
 
     renderApp(["/users"]);
 
-    expect(await screen.findByText("users.title")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "users.reset_link.generate" }));
+    expect(await screen.findByRole("heading", { name: "Users and permissions" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Security" }));
+    await user.click(screen.getByRole("button", { name: "Generate reset link" }));
 
-    expect(await screen.findByText("users.reset_link.generated_title")).toBeInTheDocument();
+    expect(await screen.findByText("One-time reset link")).toBeInTheDocument();
     expect(screen.getByText("/reset-password?token=one-time-token")).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText("users.permissions.selected_user"), "user-2");
+    await user.click(screen.getByText("Member"));
 
     await waitFor(() => {
       expect(screen.queryByText("/reset-password?token=one-time-token")).not.toBeInTheDocument();

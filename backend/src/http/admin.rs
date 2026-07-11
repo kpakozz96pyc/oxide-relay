@@ -1,17 +1,17 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use tracing::info;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 use crate::{
     app::AppState,
     auth::{self, AuthenticatedUser},
     errors::{ApiError, AppResult},
-    repository::{members, password_resets, permissions, users},
+    repository::{members, password_resets, permissions, projects, users},
     util,
 };
 
@@ -30,9 +30,51 @@ pub async fn list_users(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<Vec<UserResponse>>> {
-    auth::require_permission(&state, &user.id, "ManageUsers").await?;
+    require_any_admin_permission(&state, &user.id).await?;
     let records = users::list(&state.pool).await?;
     Ok(Json(records.into_iter().map(UserResponse::from).collect()))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/summary",
+    params(
+        ("search" = Option<String>, Query, description = "Filter by email or display name"),
+        ("status" = Option<String>, Query, description = "Filter by status: active or inactive"),
+        ("permission" = Option<String>, Query, description = "Filter by direct permission code"),
+        ("project" = Option<String>, Query, description = "Filter by project slug")
+    ),
+    responses((status = 200, body = [UserSummaryResponse]))
+)]
+pub async fn list_user_summaries(
+    State(state): State<AppState>,
+    actor: AuthenticatedUser,
+    Query(query): Query<UserSummaryQuery>,
+) -> AppResult<Json<Vec<UserSummaryResponse>>> {
+    require_any_admin_permission(&state, &actor.id).await?;
+
+    let status = match query.status.as_deref().map(str::trim) {
+        Some("active") => Some(true),
+        Some("inactive") => Some(false),
+        Some("") | None => None,
+        Some(_) => return Err(ApiError::validation("Unsupported user status filter.")),
+    };
+
+    let records = users::list_summaries(
+        &state.pool,
+        query.search.as_deref(),
+        status,
+        query.permission.as_deref(),
+        query.project.as_deref(),
+    )
+    .await?;
+
+    Ok(Json(
+        records
+            .into_iter()
+            .map(UserSummaryResponse::from)
+            .collect(),
+    ))
 }
 
 #[utoipa::path(
@@ -158,6 +200,25 @@ pub async fn generate_password_reset_link(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/catalog",
+    responses((status = 200, body = [ProjectCatalogResponse]))
+)]
+pub async fn list_project_catalog(
+    State(state): State<AppState>,
+    actor: AuthenticatedUser,
+) -> AppResult<Json<Vec<ProjectCatalogResponse>>> {
+    auth::require_permission(&state, &actor.id, "ManageUsers").await?;
+    let records = projects::list_catalog(&state.pool).await?;
+    Ok(Json(
+        records
+            .into_iter()
+            .map(ProjectCatalogResponse::from)
+            .collect(),
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Permissions
 // ---------------------------------------------------------------------------
@@ -207,6 +268,88 @@ pub async fn replace_user_permissions(
 ) -> AppResult<StatusCode> {
     auth::require_permission(&state, &actor.id, "ManagePermissions").await?;
     permissions::replace_for_user(&state.pool, &user_id, &payload.permission_codes).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/{id}/project-access",
+    params(("id" = String, Path, description = "User id")),
+    responses((status = 200, body = [UserProjectAccessResponse]))
+)]
+pub async fn get_user_project_access(
+    State(state): State<AppState>,
+    actor: AuthenticatedUser,
+    Path(user_id): Path<String>,
+) -> AppResult<Json<Vec<UserProjectAccessResponse>>> {
+    auth::require_permission(&state, &actor.id, "ManageUsers").await?;
+    let can_manage_members = permissions::user_has_permission(&state.pool, &actor.id, "ManageProjectMembers").await?;
+    let records = users::list_project_access(&state.pool, &user_id, &actor.id).await?;
+    Ok(Json(
+        records
+            .into_iter()
+            .map(|record| UserProjectAccessResponse::from_record(record, can_manage_members))
+            .collect(),
+    ))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/users/{id}/project-access",
+    params(("id" = String, Path, description = "User id")),
+    request_body = UpdateUserProjectAccessRequest,
+    responses((status = 201, body = ProjectMemberResponse))
+)]
+pub async fn add_user_project_access(
+    State(state): State<AppState>,
+    actor: AuthenticatedUser,
+    Path(user_id): Path<String>,
+    Json(payload): Json<UpdateUserProjectAccessRequest>,
+) -> AppResult<(StatusCode, Json<ProjectMemberResponse>)> {
+    auth::require_permission(&state, &actor.id, "ManageUsers").await?;
+    let project_slug = payload.project_slug.trim();
+    if project_slug.is_empty() {
+        return Err(ApiError::validation("Project slug is required."));
+    }
+
+    let project =
+        auth::authorize_project(&state, &actor, project_slug, "ManageProjectMembers").await?;
+
+    if project.owner_user_id == user_id {
+        return Err(ApiError::validation(
+            "The project owner already has implicit access.",
+        ));
+    }
+
+    let record = members::add(&state.pool, &project.id, &user_id).await?;
+    Ok((StatusCode::CREATED, Json(ProjectMemberResponse::from(record))))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/users/{id}/project-access/{project_slug}",
+    params(
+        ("id" = String, Path, description = "User id"),
+        ("project_slug" = String, Path, description = "Project slug")
+    ),
+    responses((status = 204))
+)]
+pub async fn delete_user_project_access(
+    State(state): State<AppState>,
+    actor: AuthenticatedUser,
+    Path((user_id, project_slug)): Path<(String, String)>,
+) -> AppResult<StatusCode> {
+    auth::require_permission(&state, &actor.id, "ManageUsers").await?;
+    let project =
+        auth::authorize_project(&state, &actor, &project_slug, "ManageProjectMembers").await?;
+
+    if project.owner_user_id == user_id {
+        return Err(ApiError::validation(
+            "Project owner access cannot be removed here.",
+        ));
+    }
+
+    members::remove(&state.pool, &project.id, &user_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -294,6 +437,20 @@ fn validate_create_user(payload: &CreateUserRequest) -> AppResult<()> {
     Ok(())
 }
 
+async fn require_any_admin_permission(state: &AppState, user_id: &str) -> AppResult<()> {
+    let can_manage_users = permissions::user_has_permission(&state.pool, user_id, "ManageUsers").await?;
+    let can_manage_permissions =
+        permissions::user_has_permission(&state.pool, user_id, "ManagePermissions").await?;
+
+    if can_manage_users || can_manage_permissions {
+        return Ok(());
+    }
+
+    Err(ApiError::permission_denied(
+        "Missing required permission: ManageUsers or ManagePermissions.",
+    ))
+}
+
 fn validate_update_user(payload: &UpdateUserRequest) -> AppResult<()> {
     if let Some(email) = &payload.email
     {
@@ -362,6 +519,14 @@ pub struct UpdateUserRequest {
     pub is_active: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct UserSummaryQuery {
+    pub search: Option<String>,
+    pub status: Option<String>,
+    pub permission: Option<String>,
+    pub project: Option<String>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct GeneratePasswordResetLinkResponse {
     pub reset_url: String,
@@ -392,6 +557,35 @@ impl From<users::UserRecord> for UserResponse {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+pub struct UserSummaryResponse {
+    pub id: String,
+    pub email: String,
+    pub display_name: String,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub direct_permissions_count: i64,
+    pub project_access_count: i64,
+    pub selected_project_relation: Option<String>,
+}
+
+impl From<users::UserSummaryRecord> for UserSummaryResponse {
+    fn from(r: users::UserSummaryRecord) -> Self {
+        Self {
+            id: r.id,
+            email: r.email,
+            display_name: r.display_name,
+            is_active: r.is_active,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            direct_permissions_count: r.direct_permissions_count,
+            project_access_count: r.project_access_count,
+            selected_project_relation: r.selected_project_relation,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PermissionResponse {
     pub id: String,
     pub code: String,
@@ -411,6 +605,30 @@ impl From<permissions::PermissionRecord> for PermissionResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ReplaceUserPermissionsRequest {
     pub permission_codes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateUserProjectAccessRequest {
+    pub project_slug: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ProjectCatalogResponse {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub owner_user_id: String,
+}
+
+impl From<projects::ProjectCatalogRecord> for ProjectCatalogResponse {
+    fn from(r: projects::ProjectCatalogRecord) -> Self {
+        Self {
+            id: r.id,
+            name: r.name,
+            slug: r.slug,
+            owner_user_id: r.owner_user_id,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -437,6 +655,34 @@ impl From<members::MemberRecord> for ProjectMemberResponse {
             is_active: r.is_active,
             is_owner: r.is_owner,
             added_at: r.added_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UserProjectAccessResponse {
+    pub project_id: String,
+    pub project_name: String,
+    pub project_slug: String,
+    pub owner_user_id: String,
+    pub relation: String,
+    pub access_added_at: Option<String>,
+    pub can_manage_access: bool,
+}
+
+impl UserProjectAccessResponse {
+    fn from_record(record: users::UserProjectAccessRecord, actor_has_manage_project_members: bool) -> Self {
+        let can_manage_access =
+            record.actor_is_owner || (record.actor_has_access && actor_has_manage_project_members);
+
+        Self {
+            project_id: record.project_id,
+            project_name: record.project_name,
+            project_slug: record.project_slug,
+            owner_user_id: record.owner_user_id,
+            relation: record.relation,
+            access_added_at: record.access_added_at,
+            can_manage_access,
         }
     }
 }

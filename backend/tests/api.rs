@@ -471,6 +471,24 @@ async fn admin_user_permissions_and_project_members_endpoints_work() {
     let permissions = json_body(get_permissions).await;
     assert_eq!(permissions.as_array().expect("array").len(), 3);
 
+    let list_summaries = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/users/summary?search=managed&permission=ReadProduction&status=active")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(list_summaries.status(), StatusCode::OK);
+    let summaries = json_body(list_summaries).await;
+    let summaries = summaries.as_array().expect("summary array");
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0]["email"], "managed-user@example.com");
+    assert_eq!(summaries[0]["direct_permissions_count"], 3);
+
     let owner_id = harness
         .insert_user(
             "member-owner@example.com",
@@ -483,6 +501,34 @@ async fn admin_user_permissions_and_project_members_endpoints_work() {
         .insert_project(&owner_id, "Members Project", "members-project")
         .await;
     harness.add_project_access(&owner_id, &project_id).await;
+
+    let extra_project_owner_id = harness
+        .insert_user(
+            "extra-owner@example.com",
+            "owner-password",
+            "Extra Owner",
+            true,
+        )
+        .await;
+    let extra_project_id = harness
+        .insert_project(&extra_project_owner_id, "Other Project", "other-project")
+        .await;
+    harness.add_project_access(&extra_project_owner_id, &extra_project_id).await;
+
+    let project_catalog = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/catalog")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(project_catalog.status(), StatusCode::OK);
+    let catalog = json_body(project_catalog).await;
+    assert_eq!(catalog.as_array().expect("catalog array").len(), 2);
 
     let owner_cookie = harness
         .login("member-owner@example.com", "owner-password")
@@ -506,6 +552,72 @@ async fn admin_user_permissions_and_project_members_endpoints_work() {
 
     assert_eq!(add_member.status(), StatusCode::CREATED);
 
+    let user_project_access = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/users/{managed_user_id}/project-access"))
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(user_project_access.status(), StatusCode::OK);
+    let user_project_access_body = json_body(user_project_access).await;
+    let user_project_access_items = user_project_access_body.as_array().expect("project access array");
+    assert_eq!(user_project_access_items.len(), 2);
+    let member_entry = user_project_access_items
+        .iter()
+        .find(|item| item["project_slug"] == "members-project")
+        .expect("members-project entry");
+    assert_eq!(member_entry["relation"], "member");
+    let no_access_entry = user_project_access_items
+        .iter()
+        .find(|item| item["project_slug"] == "other-project")
+        .expect("other-project entry");
+    assert_eq!(no_access_entry["relation"], "none");
+
+    let filter_by_project = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/users/summary?project=members-project")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(filter_by_project.status(), StatusCode::OK);
+    let filtered_users = json_body(filter_by_project).await;
+    let filtered_users = filtered_users.as_array().expect("filtered users array");
+    assert_eq!(filtered_users.len(), 2);
+    let managed_user_summary = filtered_users
+        .iter()
+        .find(|item| item["id"] == managed_user_id)
+        .expect("managed user summary");
+    assert_eq!(managed_user_summary["selected_project_relation"], "member");
+
+    let add_user_project_access = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/users/{managed_user_id}/project-access"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "project_slug": "other-project"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(add_user_project_access.status(), StatusCode::FORBIDDEN);
+
     let list_members = harness
         .request(
             Request::builder()
@@ -521,6 +633,25 @@ async fn admin_user_permissions_and_project_members_endpoints_work() {
     let members = json_body(list_members).await;
     assert_eq!(members.as_array().expect("array").len(), 2);
 
+    let admin_add_user_project_access = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/users/{managed_user_id}/project-access"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "project_slug": "members-project"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(admin_add_user_project_access.status(), StatusCode::NOT_FOUND);
+
     let delete_member = harness
         .request(
             Request::builder()
@@ -535,6 +666,21 @@ async fn admin_user_permissions_and_project_members_endpoints_work() {
         .await;
 
     assert_eq!(delete_member.status(), StatusCode::NO_CONTENT);
+
+    let delete_user_project_access = harness
+        .request(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/api/v1/users/{managed_user_id}/project-access/members-project"
+                ))
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(delete_user_project_access.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

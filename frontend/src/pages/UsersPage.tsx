@@ -1,41 +1,58 @@
-import { useState, useEffect } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
+  Permission,
+  ProjectCatalogItem,
+  UserProjectAccess,
+  UserSummary,
   apiGet,
-  apiPost,
-  apiPut,
-  apiDelete,
   buildErrorMessage,
-  type User,
-  type Permission,
-  type PasswordResetLinkResponse,
 } from "../api";
+import { ErrorCard } from "../components/ErrorCard";
+import { LoadingScreen } from "../components/LoadingScreen";
 import { usePermissionSet } from "../hooks/usePermissionSet";
 import { useTranslation } from "../i18n";
-import { LoadingScreen } from "../components/LoadingScreen";
-import { ErrorCard } from "../components/ErrorCard";
+import { CreateUserDialog } from "./users/CreateUserDialog";
+import { SelectedUserPanel } from "./users/SelectedUserPanel";
+import { UsersTable } from "./users/UsersTable";
+
+const NO_PROJECT_ACCESS_FILTER = "__no-project-access__";
+
+type StatusFilter = "all" | "active" | "inactive";
 
 export function UsersPage() {
-  const [newEmail, setNewEmail] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [newDisplayName, setNewDisplayName] = useState("");
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [permissionText, setPermissionText] = useState("");
-  const [editEmail, setEditEmail] = useState("");
-  const [editDisplayName, setEditDisplayName] = useState("");
-  const [editPassword, setEditPassword] = useState("");
-  const [editIsActive, setEditIsActive] = useState(true);
-  const [generatedResetLink, setGeneratedResetLink] = useState<PasswordResetLinkResponse | null>(null);
-  const queryClient = useQueryClient();
-  const permissionSet = usePermissionSet();
   const { t } = useTranslation();
+  const permissionSet = usePermissionSet();
   const canManageUsers = permissionSet.has("ManageUsers");
   const canManagePermissions = permissionSet.has("ManagePermissions");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [permissionFilter, setPermissionFilter] = useState("all");
+  const [projectFilter, setProjectFilter] = useState("all");
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [pageSuccess, setPageSuccess] = useState<string | null>(null);
 
-  const usersQuery = useQuery({
-    queryKey: ["users"],
-    queryFn: () => apiGet<User[]>("/api/v1/users"),
-    enabled: canManageUsers,
+  const usersSummaryQuery = useQuery({
+    queryKey: [
+      "users-summary",
+      {
+        search,
+        status: statusFilter,
+        permission: permissionFilter,
+        project: projectFilter === NO_PROJECT_ACCESS_FILTER ? "all" : projectFilter,
+      },
+    ],
+    queryFn: () =>
+      apiGet<UserSummary[]>(
+        buildUsersSummaryPath({
+          search,
+          status: statusFilter,
+          permission: permissionFilter,
+          project: projectFilter === NO_PROJECT_ACCESS_FILTER ? "all" : projectFilter,
+        }),
+      ),
+    enabled: canManageUsers || canManagePermissions,
   });
 
   const permissionsQuery = useQuery({
@@ -44,321 +61,201 @@ export function UsersPage() {
     enabled: canManagePermissions,
   });
 
+  const projectCatalogQuery = useQuery({
+    queryKey: ["projects-catalog"],
+    queryFn: () => apiGet<ProjectCatalogItem[]>("/api/v1/projects/catalog"),
+    enabled: canManageUsers,
+  });
+
+  const users = useMemo(() => {
+    const baseUsers = usersSummaryQuery.data ?? [];
+    if (projectFilter === NO_PROJECT_ACCESS_FILTER) {
+      return baseUsers.filter((user) => user.project_access_count === 0);
+    }
+    return baseUsers;
+  }, [projectFilter, usersSummaryQuery.data]);
+
+  useEffect(() => {
+    if (!users.length) {
+      setSelectedUserId("");
+      return;
+    }
+    if (!selectedUserId || !users.some((user) => user.id === selectedUserId)) {
+      setSelectedUserId(users[0].id);
+    }
+  }, [selectedUserId, users]);
+
+  const selectedUser = users.find((user) => user.id === selectedUserId) ?? null;
+
   const userPermissionsQuery = useQuery({
     queryKey: ["user-permissions", selectedUserId],
     queryFn: () => apiGet<Permission[]>(`/api/v1/users/${selectedUserId}/permissions`),
     enabled: Boolean(selectedUserId) && canManagePermissions,
   });
 
-  useEffect(() => {
-    if (!selectedUserId && usersQuery.data?.[0]) {
-      setSelectedUserId(usersQuery.data[0].id);
-    }
-  }, [selectedUserId, usersQuery.data]);
-
-  useEffect(() => {
-    const selectedUser = usersQuery.data?.find((user) => user.id === selectedUserId);
-    if (selectedUser) {
-      setEditEmail(selectedUser.email);
-      setEditDisplayName(selectedUser.display_name);
-      setEditPassword("");
-      setEditIsActive(selectedUser.is_active);
-      setGeneratedResetLink(null);
-    }
-  }, [selectedUserId, usersQuery.data]);
-
-  useEffect(() => {
-    if (userPermissionsQuery.data) {
-      setPermissionText(userPermissionsQuery.data.map((item) => item.code).join("\n"));
-    }
-  }, [userPermissionsQuery.data]);
-
-  const createUserMutation = useMutation({
-    mutationFn: async () =>
-      apiPost("/api/v1/users", {
-        email: newEmail,
-        password: newPassword,
-        display_name: newDisplayName,
-        is_active: true,
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["users"] });
-      setNewEmail("");
-      setNewPassword("");
-      setNewDisplayName("");
-    },
-  });
-
-  const replacePermissionsMutation = useMutation({
-    mutationFn: async () =>
-      apiPut(`/api/v1/users/${selectedUserId}/permissions`, {
-        permission_codes: permissionText
-          .split("\n")
-          .map((item) => item.trim())
-          .filter(Boolean),
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["user-permissions", selectedUserId] });
-    },
-  });
-
-  const updateUserMutation = useMutation({
-    mutationFn: async () =>
-      apiPut(`/api/v1/users/${selectedUserId}`, {
-        email: editEmail,
-        display_name: editDisplayName,
-        password: editPassword || undefined,
-        is_active: editIsActive,
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["users"] });
-    },
-  });
-
-  const deleteUserMutation = useMutation({
-    mutationFn: async () => apiDelete(`/api/v1/users/${selectedUserId}`),
-    onSuccess: async () => {
-      const previousUsers = usersQuery.data ?? [];
-      await queryClient.invalidateQueries({ queryKey: ["users"] });
-      const nextUsers = previousUsers.filter((user) => user.id !== selectedUserId);
-      setSelectedUserId(nextUsers[0]?.id ?? "");
-    },
-  });
-
-  const generateResetLinkMutation = useMutation({
-    mutationFn: async () =>
-      apiPost<PasswordResetLinkResponse>(`/api/v1/users/${selectedUserId}/password-reset-link`, undefined),
-    onSuccess: (response) => {
-      setGeneratedResetLink(response);
-    },
+  const userProjectAccessQuery = useQuery({
+    queryKey: ["user-project-access", selectedUserId],
+    queryFn: () => apiGet<UserProjectAccess[]>(`/api/v1/users/${selectedUserId}/project-access`),
+    enabled: Boolean(selectedUserId) && canManageUsers,
   });
 
   if (!canManageUsers && !canManagePermissions) {
-    return (
-      <ErrorCard
-        title={t("users.error.title")}
-        message={t("users.error.forbidden")}
-      />
-    );
+    return <ErrorCard title={t("users.error.title")} message={t("users.error.forbidden")} />;
   }
 
-  if ((canManageUsers && usersQuery.isLoading) || (canManagePermissions && permissionsQuery.isLoading)) {
-    return <LoadingScreen label={t("users.loading")} compact />;
+  if (usersSummaryQuery.isLoading) {
+    return <LoadingScreen label="Loading users workspace..." compact />;
   }
 
-  if (canManageUsers && usersQuery.isError) {
-    return <ErrorCard title={t("users.error.title")} message={buildErrorMessage(usersQuery.error)} />;
+  if (usersSummaryQuery.isError) {
+    return <ErrorCard title={t("users.error.title")} message={buildErrorMessage(usersSummaryQuery.error)} />;
   }
 
-  if (canManagePermissions && permissionsQuery.isError) {
-    return <ErrorCard title={t("users.permissions.error.title")} message={buildErrorMessage(permissionsQuery.error)} />;
-  }
+  const permissionsCatalog = permissionsQuery.data ?? [];
+  const projectCatalog = projectCatalogQuery.data ?? [];
 
   return (
-    <section className="page">
+    <section className="page project-settings-page users-page">
       <header className="page-header">
         <div>
           <p className="eyebrow">{t("users.eyebrow")}</p>
-          <h1 className="page-title">{t("users.title")}</h1>
+          <h1 className="page-title">Users and permissions</h1>
         </div>
       </header>
 
-      {createUserMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(createUserMutation.error)}</div>
-      ) : null}
-      {replacePermissionsMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(replacePermissionsMutation.error)}</div>
-      ) : null}
-      {updateUserMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(updateUserMutation.error)}</div>
-      ) : null}
-      {deleteUserMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(deleteUserMutation.error)}</div>
-      ) : null}
-      {generateResetLinkMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(generateResetLinkMutation.error)}</div>
-      ) : null}
+      <div className="toolbar users-toolbar">
+        <label className="field search-field">
+          <span>Search users</span>
+          <input
+            placeholder="Search by email or display name"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
 
-      <div className="workspace-grid">
-        <article className="panel stack gap-md">
-          <header className="panel-header">
-            <h2>{t("users.create.title")}</h2>
-          </header>
-          <div className="form-grid">
-            <label className="field">
-              <span>{t("users.fields.email")}</span>
-              <input value={newEmail} onChange={(event) => setNewEmail(event.target.value)} />
-            </label>
-            <label className="field">
-              <span>{t("users.fields.display_name")}</span>
-              <input value={newDisplayName} onChange={(event) => setNewDisplayName(event.target.value)} />
-            </label>
-          </div>
-          <label className="field">
-            <span>{t("users.fields.password")}</span>
-            <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
-          </label>
-          <button
-            className="button primary"
-            disabled={createUserMutation.isPending || !canManageUsers}
-            onClick={() => createUserMutation.mutate()}
-          >
-            {t("users.create.submit")}
-          </button>
-
-          <div className="divider" />
-
-          <header className="panel-header">
-            <h2>{t("users.list.title")}</h2>
-            <span className="badge">{usersQuery.data?.length ?? 0}</span>
-          </header>
-          {usersQuery.data?.map((user) => (
-            <button
-              className={`member-card selectable${selectedUserId === user.id ? " selected" : ""}`}
-              key={user.id}
-              onClick={() => setSelectedUserId(user.id)}
-              type="button"
-            >
-              <div className="stack gap-sm">
-                <strong>{user.display_name}</strong>
-                <span className="muted">{user.email}</span>
-              </div>
-              <span className="badge subtle">{user.is_active ? t("users.badges.active") : t("users.badges.inactive")}</span>
-            </button>
-          ))}
-        </article>
-
-        <article className="panel stack gap-md">
-          <header className="panel-header">
-            <h2>{t("users.permissions.title")}</h2>
-          </header>
-          <label className="field">
-            <span>{t("users.permissions.selected_user")}</span>
-            <select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
-              {usersQuery.data?.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.display_name}
+        {canManageUsers ? (
+          <label className="field compact-field">
+            <span>Project</span>
+            <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
+              <option value="all">All projects</option>
+              <option value={NO_PROJECT_ACCESS_FILTER}>No project access</option>
+              {projectCatalog.map((project) => (
+                <option key={project.id} value={project.slug}>
+                  {project.name}
                 </option>
               ))}
             </select>
           </label>
-          <label className="field">
-            <span>{t("users.permissions.codes")}</span>
-            <textarea
-              className="textarea"
-              rows={12}
-              value={permissionText}
-              onChange={(event) => setPermissionText(event.target.value)}
-              placeholder={t("users.permissions.codes_placeholder")}
-            />
+        ) : null}
+
+        <label className="field compact-field">
+          <span>Status</span>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </label>
+
+        {canManagePermissions ? (
+          <label className="field compact-field">
+            <span>Permission</span>
+            <select value={permissionFilter} onChange={(event) => setPermissionFilter(event.target.value)}>
+              <option value="all">Any permission</option>
+              {permissionsCatalog.map((permission) => (
+                <option key={permission.id} value={permission.code}>
+                  {permission.code}
+                </option>
+              ))}
+            </select>
           </label>
-          <button
-            className="button secondary"
-            disabled={!selectedUserId || replacePermissionsMutation.isPending || !canManagePermissions}
-            onClick={() => replacePermissionsMutation.mutate()}
-          >
-            {t("users.permissions.replace")}
+        ) : null}
+
+        {canManageUsers ? (
+          <button className="button primary users-toolbar-action" onClick={() => setIsCreateDialogOpen(true)} type="button">
+            New user
           </button>
-          <div className="divider" />
-          <header className="panel-header">
-            <h2>{t("users.update.title")}</h2>
-          </header>
-          <div className="form-grid">
-            <label className="field">
-              <span>{t("users.fields.email")}</span>
-              <input value={editEmail} onChange={(event) => setEditEmail(event.target.value)} />
-            </label>
-            <label className="field">
-              <span>{t("users.fields.display_name")}</span>
-              <input value={editDisplayName} onChange={(event) => setEditDisplayName(event.target.value)} />
-            </label>
-          </div>
-          <label className="field">
-            <span>{t("users.fields.password")}</span>
-            <input
-              type="password"
-              value={editPassword}
-              onChange={(event) => setEditPassword(event.target.value)}
-              placeholder={t("users.update.password_placeholder")}
-            />
-          </label>
-          <label className="checkbox-row">
-            <input checked={editIsActive} onChange={(event) => setEditIsActive(event.target.checked)} type="checkbox" />
-            <span>{t("users.update.is_active")}</span>
-          </label>
-          <div className="action-row">
-            <button
-              className="button ghost"
-              disabled={!selectedUserId || generateResetLinkMutation.isPending || !canManageUsers}
-              onClick={() => {
-                setGeneratedResetLink(null);
-                generateResetLinkMutation.mutate();
-              }}
-            >
-              {generateResetLinkMutation.isPending
-                ? t("users.reset_link.pending")
-                : t("users.reset_link.generate")}
-            </button>
-          </div>
-          {generatedResetLink ? (
-            <div className="banner info stack gap-sm">
-              <strong>{t("users.reset_link.generated_title")}</strong>
-              <span>{t("users.reset_link.one_time_notice")}</span>
-              <code className="inline-code-block">{generatedResetLink.reset_url}</code>
-              <span>{`${t("users.reset_link.expires_at")} ${generatedResetLink.expires_at}`}</span>
-              <div className="action-row">
-                <button
-                  className="button secondary"
-                  type="button"
-                  onClick={async () => {
-                    await navigator.clipboard.writeText(
-                      `${window.location.origin}${generatedResetLink.reset_url}`,
-                    );
-                  }}
-                >
-                  {t("actions.copy")}
-                </button>
-                <button
-                  className="button ghost"
-                  type="button"
-                  onClick={() => setGeneratedResetLink(null)}
-                >
-                  {t("actions.clear")}
-                </button>
-              </div>
-            </div>
-          ) : null}
-          <div className="action-row">
-            <button
-              className="button secondary"
-              disabled={!selectedUserId || updateUserMutation.isPending || !canManageUsers}
-              onClick={() => updateUserMutation.mutate()}
-            >
-              {t("users.update.save")}
-            </button>
-            <button
-              className="button ghost danger"
-              disabled={!selectedUserId || deleteUserMutation.isPending || !canManageUsers}
-              onClick={() => deleteUserMutation.mutate()}
-            >
-              {t("users.update.delete")}
-            </button>
-          </div>
-          <div className="divider" />
-          <header className="panel-header">
-            <h2>{t("users.catalog.title")}</h2>
-            <span className="badge">{permissionsQuery.data?.length ?? 0}</span>
-          </header>
-          <div className="permission-grid">
-            {permissionsQuery.data?.map((permission) => (
-              <div className="permission-card" key={permission.id}>
-                <strong>{permission.code}</strong>
-                <span className="muted">{permission.description ?? t("users.catalog.no_description")}</span>
-              </div>
-            ))}
-          </div>
-        </article>
+        ) : null}
       </div>
+
+      {pageSuccess ? <div className="banner success">{pageSuccess}</div> : null}
+      {permissionsQuery.isError ? <div className="banner error">{buildErrorMessage(permissionsQuery.error)}</div> : null}
+      {projectCatalogQuery.isError ? <div className="banner error">{buildErrorMessage(projectCatalogQuery.error)}</div> : null}
+      {userPermissionsQuery.isError ? <div className="banner error">{buildErrorMessage(userPermissionsQuery.error)}</div> : null}
+      {userProjectAccessQuery.isError ? <div className="banner error">{buildErrorMessage(userProjectAccessQuery.error)}</div> : null}
+
+      <div className="users-master-grid">
+        <article className="panel stack gap-md">
+          <header className="panel-header">
+            <div className="stack gap-sm">
+              <h2>Users</h2>
+              <p className="panel-copy">Compact directory with search, filters, direct permission summary, and project access count.</p>
+            </div>
+            <span className="badge">{users.length}</span>
+          </header>
+
+          <UsersTable
+            projectFilter={canManageUsers ? projectFilter : null}
+            selectedUserId={selectedUserId}
+            users={users}
+            onSelect={setSelectedUserId}
+          />
+        </article>
+
+        <SelectedUserPanel
+          canManagePermissions={canManagePermissions}
+          canManageUsers={canManageUsers}
+          permissionsCatalog={permissionsCatalog}
+          permissionsLoading={permissionsQuery.isLoading || userPermissionsQuery.isLoading}
+          projectAccess={userProjectAccessQuery.data ?? []}
+          projectAccessLoading={projectCatalogQuery.isLoading || userProjectAccessQuery.isLoading}
+          projectCatalog={projectCatalog}
+          selectedUser={selectedUser}
+          userPermissions={userPermissionsQuery.data ?? []}
+          onDeleted={() => {
+            setPageSuccess("User deleted.");
+            setSelectedUserId("");
+          }}
+        />
+      </div>
+
+      <CreateUserDialog
+        canManageUsers={canManageUsers}
+        open={isCreateDialogOpen}
+        onClose={() => setIsCreateDialogOpen(false)}
+        onCreated={(user) => {
+          setPageSuccess("User created.");
+          setSelectedUserId(user.id);
+        }}
+      />
     </section>
   );
+}
+
+function buildUsersSummaryPath({
+  search,
+  status,
+  permission,
+  project,
+}: {
+  search: string;
+  status: StatusFilter;
+  permission: string;
+  project: string;
+}) {
+  const params = new URLSearchParams();
+  if (search.trim()) {
+    params.set("search", search.trim());
+  }
+  if (status !== "all") {
+    params.set("status", status);
+  }
+  if (permission !== "all") {
+    params.set("permission", permission);
+  }
+  if (project !== "all") {
+    params.set("project", project);
+  }
+  const query = params.toString();
+  return query ? `/api/v1/users/summary?${query}` : "/api/v1/users/summary";
 }

@@ -60,6 +60,7 @@ pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
             "/api/v1/users",
             get(admin::list_users).post(admin::create_user),
         )
+        .route("/api/v1/users/summary", get(admin::list_user_summaries))
         .route(
             "/api/v1/users/{id}",
             put(admin::update_user).delete(admin::delete_user),
@@ -68,10 +69,19 @@ pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
             "/api/v1/users/{id}/password-reset-link",
             post(admin::generate_password_reset_link),
         )
+        .route("/api/v1/projects/catalog", get(admin::list_project_catalog))
         .route("/api/v1/permissions", get(admin::list_permissions))
         .route(
             "/api/v1/users/{id}/permissions",
             get(admin::get_user_permissions).put(admin::replace_user_permissions),
+        )
+        .route(
+            "/api/v1/users/{id}/project-access",
+            get(admin::get_user_project_access).post(admin::add_user_project_access),
+        )
+        .route(
+            "/api/v1/users/{id}/project-access/{project_slug}",
+            delete(admin::delete_user_project_access),
         )
         .route(
             "/api/v1/projects",

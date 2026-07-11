@@ -108,10 +108,33 @@ export type User = {
   updated_at: string;
 };
 
+export type UserSummary = User & {
+  direct_permissions_count: number;
+  project_access_count: number;
+  selected_project_relation: string | null;
+};
+
 export type Permission = {
   id: string;
   code: string;
   description: string | null;
+};
+
+export type ProjectCatalogItem = {
+  id: string;
+  name: string;
+  slug: string;
+  owner_user_id: string;
+};
+
+export type UserProjectAccess = {
+  project_id: string;
+  project_name: string;
+  project_slug: string;
+  owner_user_id: string;
+  relation: string;
+  access_added_at: string | null;
+  can_manage_access: boolean;
 };
 
 export type PasswordResetLinkResponse = {

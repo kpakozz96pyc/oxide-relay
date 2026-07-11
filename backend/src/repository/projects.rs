@@ -51,6 +51,14 @@ pub struct EnvironmentRecord {
     pub updated_at: String,
 }
 
+#[derive(Debug, FromRow)]
+pub struct ProjectCatalogRecord {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub owner_user_id: String,
+}
+
 // ---------------------------------------------------------------------------
 // Input types
 // ---------------------------------------------------------------------------
@@ -97,6 +105,19 @@ pub async fn list_for_user(pool: &SqlitePool, user_id: &str) -> AppResult<Vec<Pr
     .fetch_all(pool)
     .await
     .map_err(|e| ApiError::from_sqlx(e, "Unable to list projects."))
+}
+
+pub async fn list_catalog(pool: &SqlitePool) -> AppResult<Vec<ProjectCatalogRecord>> {
+    sqlx::query_as::<_, ProjectCatalogRecord>(
+        r#"
+        SELECT id, name, slug, owner_user_id
+        FROM projects
+        ORDER BY LOWER(name), LOWER(slug)
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to list project catalog."))
 }
 
 pub async fn create(pool: &SqlitePool, input: CreateProjectInput<'_>) -> AppResult<ProjectRecord> {

@@ -1,0 +1,56 @@
+import { Link } from "react-router-dom";
+import { Project } from "../../api";
+
+export function ProjectsTable({ projects }: { projects: Project[] }) {
+  if (projects.length === 0) {
+    return (
+      <div className="projects-empty-state">
+        <strong>No projects are available.</strong>
+        <p className="muted">Create a project or ask its owner to grant you project access.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="table-shell projects-table-shell">
+      <table>
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>Access</th>
+            <th>Slug</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {projects.map((project) => (
+            <tr className="projects-table-row" key={project.id}>
+              <td>
+                <div className="stack gap-sm">
+                  <Link className="project-link" to={`/projects/${project.slug}`}>
+                    {project.name}
+                  </Link>
+                  <span className="muted">{project.description ?? "No description provided."}</span>
+                </div>
+              </td>
+              <td>
+                <span className="badge subtle">{project.is_owner ? "Owner" : "Member"}</span>
+              </td>
+              <td>{project.slug}</td>
+              <td>{formatShortDate(project.updated_at)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function formatShortDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(date);
+}

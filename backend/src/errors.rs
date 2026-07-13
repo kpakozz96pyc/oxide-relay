@@ -37,6 +37,10 @@ impl ApiError {
         Self::new(StatusCode::CONFLICT, "Conflict", message)
     }
 
+    pub fn rate_limited(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::TOO_MANY_REQUESTS, "RateLimited", message)
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", message)
     }

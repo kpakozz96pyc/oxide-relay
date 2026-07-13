@@ -320,6 +320,15 @@ For local development, keep `cookie_secure=false`.
 
 For HTTPS deployments, set `OXIDERELAY_SESSION_COOKIE_SECURE=true`.
 
+### Login Rate Limit
+
+To limit password guessing, login attempts are persisted in SQLite by a hash of
+the normalized email address. Each identifier can make 15 unsuccessful login
+attempts in a five-minute window. Further attempts return `429 RateLimited`
+until the window expires. Successful logins clear the counter. The API uses
+the same invalid-credentials response for unknown, inactive, and incorrect
+credentials.
+
 ---
 
 # Local Startup

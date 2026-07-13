@@ -1,3 +1,4 @@
+pub mod login_attempts;
 pub mod members;
 pub mod password_resets;
 pub mod permissions;

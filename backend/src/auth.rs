@@ -21,9 +21,12 @@ use uuid::Uuid;
 use crate::{
     app::AppState,
     errors::{ApiError, AppResult},
-    repository::{password_resets, permissions, sessions, users},
+    repository::{login_attempts, password_resets, permissions, sessions, users},
     util,
 };
+
+const LOGIN_MAX_FAILED_ATTEMPTS: i64 = 15;
+const LOGIN_ATTEMPT_WINDOW_MINUTES: i64 = 5;
 
 // ---------------------------------------------------------------------------
 // Login / logout / me handlers
@@ -36,7 +39,8 @@ use crate::{
     responses(
         (status = 200, body = AuthResponse),
         (status = 400, body = crate::errors::ErrorResponse),
-        (status = 401, body = crate::errors::ErrorResponse)
+        (status = 401, body = crate::errors::ErrorResponse),
+        (status = 429, body = crate::errors::ErrorResponse)
     )
 )]
 pub async fn login(
@@ -46,6 +50,24 @@ pub async fn login(
     let email = payload.email.trim().to_lowercase();
     if email.is_empty() || payload.password.is_empty() {
         return Err(ApiError::validation("Email and password are required."));
+    }
+
+    let identifier_hash = util::sha256_hex(&email);
+    let now = util::now_utc()?;
+    let window_cutoff = util::past_utc_minutes(LOGIN_ATTEMPT_WINDOW_MINUTES)?;
+    let _ = login_attempts::purge_expired(&state.pool, &window_cutoff).await;
+
+    if login_attempts::is_rate_limited(
+        &state.pool,
+        &identifier_hash,
+        &window_cutoff,
+        LOGIN_MAX_FAILED_ATTEMPTS,
+    )
+    .await?
+    {
+        return Err(ApiError::rate_limited(
+            "Too many login attempts. Try again later.",
+        ));
     }
 
     let user = sqlx::query_as::<_, UserRecord>(
@@ -58,14 +80,23 @@ pub async fn login(
     .bind(&email)
     .fetch_optional(&state.pool)
     .await
-    .map_err(|error| ApiError::from_sqlx(error, "Unable to load the user."))?
-    .ok_or_else(|| ApiError::unauthorized("Invalid email or password."))?;
+    .map_err(|error| ApiError::from_sqlx(error, "Unable to load the user."))?;
 
-    if !user.is_active {
-        return Err(ApiError::unauthorized("This user is inactive."));
-    }
+    let is_authenticated = match user.as_ref() {
+        Some(user) => user.is_active && verify_password(&payload.password, &user.password_hash).is_ok(),
+        None => {
+            // Keep unknown-account attempts in the same expensive Argon2 path.
+            let _ = util::hash_password(&payload.password)?;
+            false
+        }
+    };
 
-    verify_password(&payload.password, &user.password_hash)?;
+    let Some(user) = user.filter(|_| is_authenticated) else {
+        login_attempts::record_failure(&state.pool, &identifier_hash, &now, &window_cutoff).await?;
+        return Err(ApiError::unauthorized("Invalid email or password."));
+    };
+
+    login_attempts::clear(&state.pool, &identifier_hash).await?;
 
     // Opportunistically clean up expired sessions to prevent unbounded growth.
     let _ = sessions::purge_expired(&state.pool).await;

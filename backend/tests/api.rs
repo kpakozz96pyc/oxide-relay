@@ -895,6 +895,82 @@ async fn create_user_rejects_invalid_email_and_weak_password() {
 }
 
 #[tokio::test]
+async fn login_rate_limit_blocks_attempts_after_the_fifteenth_failure() {
+    let harness = TestHarness::new().await;
+    let identifier_hash = oxiderelay_backend::util::sha256_hex("admin@example.com");
+    let now = now_utc();
+
+    sqlx::query(
+        r#"
+        INSERT INTO login_attempts (identifier_hash, failed_attempts, window_started_at, updated_at)
+        VALUES (?1, 14, ?2, ?2)
+        "#,
+    )
+    .bind(&identifier_hash)
+    .bind(&now)
+    .execute(&harness.pool)
+    .await
+    .expect("seed login attempts");
+
+    let fifteenth_failure = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "email": "admin@example.com", "password": "wrong-password" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(fifteenth_failure.status(), StatusCode::UNAUTHORIZED);
+
+    let limited = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "email": "admin@example.com", "password": "wrong-password" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    sqlx::query("UPDATE login_attempts SET failed_attempts = 14 WHERE identifier_hash = ?1")
+        .bind(&identifier_hash)
+        .execute(&harness.pool)
+        .await
+        .expect("restore attempts below limit");
+
+    let successful_login = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "email": "admin@example.com", "password": "admin-password" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(successful_login.status(), StatusCode::OK);
+
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM login_attempts WHERE identifier_hash = ?1",
+    )
+    .bind(&identifier_hash)
+    .fetch_one(&harness.pool)
+    .await
+    .expect("count login attempts");
+    assert_eq!(remaining, 0);
+}
+
+#[tokio::test]
 async fn creating_project_bootstraps_default_language_namespace_and_environments() {
     let harness = TestHarness::new().await;
     let admin_cookie = harness.login("admin@example.com", "admin-password").await;

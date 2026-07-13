@@ -36,6 +36,13 @@ local development: cookie_secure=false
 HTTPS production:  cookie_secure=true
 ```
 
+## Login Rate Limit
+
+Failed login attempts are persisted in SQLite by a hash of the normalized email
+address. One identifier can make 15 unsuccessful attempts in a five-minute
+window. Further attempts return `429 RateLimited` until the window expires.
+Successful logins clear the counter. This limit is fixed in the current MVP.
+
 ## Docker Run
 
 Preferred install path:

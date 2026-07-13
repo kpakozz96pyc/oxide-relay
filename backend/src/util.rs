@@ -26,6 +26,12 @@ pub fn future_utc_minutes(minutes: i64) -> AppResult<String> {
         .map_err(|error| ApiError::internal(format!("Unable to format expiration time: {error}")))
 }
 
+pub fn past_utc_minutes(minutes: i64) -> AppResult<String> {
+    (OffsetDateTime::now_utc() - Duration::minutes(minutes))
+        .format(&Rfc3339)
+        .map_err(|error| ApiError::internal(format!("Unable to format expiration time: {error}")))
+}
+
 /// Hashes a plaintext password using Argon2.
 pub fn hash_password(password: &str) -> AppResult<String> {
     let salt = SaltString::generate(&mut OsRng);

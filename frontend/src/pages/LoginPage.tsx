@@ -5,6 +5,7 @@ import { Globe, Lock, Layers, Users } from "lucide-react";
 import { apiPost, buildErrorMessage, ApiError } from "../api";
 import { useSession } from "../hooks/useSession";
 import { useTranslation } from "../i18n";
+import { APP_VERSION } from "../version";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -94,7 +95,8 @@ export function LoginPage() {
         </div>
 
         <div className="login-hero-footer">
-          {t("login.hero.footer")}
+          <span>{t("login.hero.footer")}</span>
+          <span className="login-version">v{APP_VERSION}</span>
         </div>
       </div>
 

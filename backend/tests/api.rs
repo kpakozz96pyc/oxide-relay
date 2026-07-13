@@ -125,6 +125,7 @@ async fn health_endpoint_reflects_database_readiness() {
     let healthy_body = json_body(healthy).await;
     assert_eq!(healthy_body["status"], "ok");
     assert_eq!(healthy_body["database"], "ok");
+    assert_eq!(healthy_body["version"], env!("CARGO_PKG_VERSION"));
 
     harness.pool.close().await;
 
@@ -142,6 +143,7 @@ async fn health_endpoint_reflects_database_readiness() {
     let unhealthy_body = json_body(unhealthy).await;
     assert_eq!(unhealthy_body["status"], "error");
     assert_eq!(unhealthy_body["database"], "error");
+    assert_eq!(unhealthy_body["version"], env!("CARGO_PKG_VERSION"));
 }
 
 #[tokio::test]

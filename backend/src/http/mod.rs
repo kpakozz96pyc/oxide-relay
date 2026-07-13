@@ -205,6 +205,7 @@ async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthRespon
             Json(HealthResponse {
                 status: "ok",
                 database: "ok",
+                version: env!("CARGO_PKG_VERSION"),
             }),
         ),
         Err(_) => (
@@ -212,6 +213,7 @@ async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthRespon
             Json(HealthResponse {
                 status: "error",
                 database: "error",
+                version: env!("CARGO_PKG_VERSION"),
             }),
         ),
     }
@@ -221,4 +223,5 @@ async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthRespon
 struct HealthResponse {
     status: &'static str,
     database: &'static str,
+    version: &'static str,
 }

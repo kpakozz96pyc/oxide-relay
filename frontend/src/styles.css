@@ -656,10 +656,19 @@ th {
 }
 
 .login-hero-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
   color: var(--text-muted);
   font-size: var(--text-xs);
   position: relative;
   z-index: 1;
+}
+
+.login-version {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .login-form-shell {

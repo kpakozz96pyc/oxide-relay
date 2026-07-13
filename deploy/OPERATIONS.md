@@ -98,14 +98,22 @@ Restore strategy:
 2. Replace the SQLite database files in the data volume.
 3. Start the service again and let it run migrations if needed.
 
-## Migration and Upgrade Expectations
+## Schema and Upgrade Policy
+
+### Development Through Version 0.0.9
+
+OxideRelay is in active pre-`0.1.0` development. Database schema and data are
+not upgrade-compatible during this phase. Use only disposable development data;
+after incompatible changes, stop the service and recreate the SQLite database.
+
+### Releases Starting With Version 0.1.0
 
 - Migrations run automatically on startup.
-- Startup should be considered part of the upgrade path.
-- New releases must preserve existing data by adding forward-only migrations.
+- Startup is part of the supported upgrade path.
+- Releases preserve existing data through forward-only migrations.
 - If a migration fails, the service should be treated as not successfully deployed.
 
-Recommended upgrade flow:
+Recommended upgrade flow for `0.1.0` and later:
 
 1. Take a backup of the SQLite volume.
 2. Deploy the new backend image.
@@ -118,7 +126,7 @@ For a fresh environment:
 
 1. Start with an empty writable data directory.
 2. Provide bootstrap admin credentials.
-3. Confirm `/api/health` returns `{"status":"ok","database":"ok"}`.
+3. Confirm `/api/health` returns `{"status":"ok","database":"ok","version":"0.0.9"}`.
 4. Log in with the bootstrap admin.
 
 For an existing environment:

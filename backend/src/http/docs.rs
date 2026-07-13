@@ -125,7 +125,7 @@ use crate::{
     )),
     info(
         title = "OxideRelay API",
-        version = "0.1.0",
+        version = "0.0.9",
         description = "Admin and delivery API for OxideRelay MVP."
     )
 )]

@@ -359,8 +359,7 @@ export function SelectedUserPanel({
             <div className="environment-matrix">
               <div className="environment-matrix-header">
                 <span />
-                <span>Development</span>
-                <span>Staging</span>
+                <span>All except production</span>
                 <span>Production</span>
               </div>
               {permissionGroups.environmentPermissions.map((row) => (

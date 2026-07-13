@@ -170,3 +170,32 @@ ON sessions(user_id);
 
 CREATE INDEX idx_sessions_expires_at
 ON sessions(expires_at);
+
+CREATE TABLE password_reset_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL,
+    created_by_user_id TEXT NOT NULL,
+
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_password_reset_tokens_user_id
+ON password_reset_tokens(user_id);
+
+CREATE INDEX idx_password_reset_tokens_expires_at
+ON password_reset_tokens(expires_at);
+
+CREATE TABLE login_attempts (
+    identifier_hash TEXT PRIMARY KEY,
+    failed_attempts INTEGER NOT NULL,
+    window_started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX idx_login_attempts_window_started_at
+ON login_attempts(window_started_at);

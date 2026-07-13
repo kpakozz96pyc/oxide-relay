@@ -1,7 +1,9 @@
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Project } from "../../api";
 
 export function ProjectsTable({ projects }: { projects: Project[] }) {
+  const navigate = useNavigate();
+
   if (projects.length === 0) {
     return (
       <div className="projects-empty-state">
@@ -24,12 +26,22 @@ export function ProjectsTable({ projects }: { projects: Project[] }) {
         </thead>
         <tbody>
           {projects.map((project) => (
-            <tr className="projects-table-row" key={project.id}>
+            <tr
+              className="projects-table-row"
+              key={project.id}
+              onClick={() => navigate(`/projects/${project.slug}`)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  navigate(`/projects/${project.slug}`);
+                }
+              }}
+              role="link"
+              tabIndex={0}
+            >
               <td>
                 <div className="stack gap-sm">
-                  <Link className="project-link" to={`/projects/${project.slug}`}>
-                    {project.name}
-                  </Link>
+                  <strong className="project-link">{project.name}</strong>
                   <span className="muted">{project.description ?? "No description provided."}</span>
                 </div>
               </td>

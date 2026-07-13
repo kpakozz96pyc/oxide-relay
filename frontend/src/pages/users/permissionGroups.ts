@@ -26,19 +26,10 @@ const PERMISSION_GROUPS: PermissionGroupDefinition[] = [
 
 export const ENVIRONMENT_PERMISSION_MATRIX = [
   {
-    rowLabel: "Read",
-    values: [
-      { columnLabel: "Development", code: "ReadDevelopment" },
-      { columnLabel: "Staging", code: "ReadStaging" },
-      { columnLabel: "Production", code: "ReadProduction" },
-    ],
-  },
-  {
     rowLabel: "Edit",
     values: [
-      { columnLabel: "Development", code: "EditDevelopment" },
-      { columnLabel: "Staging", code: "EditStaging" },
-      { columnLabel: "Production", code: "EditProduction" },
+      { columnLabel: "All except production", code: "EditAll" },
+      { columnLabel: "Production", code: "EditProd" },
     ],
   },
 ] as const;

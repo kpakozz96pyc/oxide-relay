@@ -15,7 +15,7 @@ import {
 } from "../../api";
 import { usePermissionSet } from "../../hooks/usePermissionSet";
 import { useTranslation } from "../../i18n";
-import { editEnvironmentPermission, readEnvironmentPermission } from "../../lib/permissions";
+import { editEnvironmentPermission } from "../../lib/permissions";
 
 type NewTermDraft = {
   id: string;
@@ -115,9 +115,7 @@ export function ProjectTranslationsPanel({
       ),
     enabled:
       Boolean(projectSlug && environment && namespace && selectedLanguageCodes.length > 0) &&
-      (project.is_owner ||
-        (permissionSet.has("ReadTranslations") &&
-          permissionSet.has(readEnvironmentPermission(environment)))),
+      (project.is_owner || permissionSet.has("ReadTranslations")),
   });
 
   useEffect(() => {
@@ -187,7 +185,7 @@ export function ProjectTranslationsPanel({
     },
   });
 
-  const canReadCurrentEnvironment = project.is_owner || permissionSet.has(readEnvironmentPermission(environment));
+  const canReadCurrentEnvironment = project.is_owner || permissionSet.has("ReadTranslations");
   const canEditCurrentEnvironment = project.is_owner || permissionSet.has(editEnvironmentPermission(environment));
   const canCreateTranslation = project.is_owner || (permissionSet.has("EditTranslations") && canEditCurrentEnvironment);
   const canDeleteTranslation = project.is_owner || (permissionSet.has("DeleteTranslations") && canEditCurrentEnvironment);

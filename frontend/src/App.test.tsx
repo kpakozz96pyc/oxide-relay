@@ -382,8 +382,7 @@ describe("App routing", () => {
               "DeleteTranslations",
               "ImportTranslations",
               "ReadTranslations",
-              "ReadProduction",
-              "EditProduction",
+              "EditProd",
             ],
           });
         }

@@ -337,15 +337,11 @@ pub async fn require_environment_permission(
     access_kind: EnvironmentAccessKind,
     environment_slug: &str,
 ) -> AppResult<()> {
-    if project.is_owner {
+    if project.is_owner || matches!(access_kind, EnvironmentAccessKind::Read) {
         return Ok(());
     }
 
-    let permission_code = match access_kind {
-        EnvironmentAccessKind::Read => read_environment_permission_code(environment_slug),
-        EnvironmentAccessKind::Edit => edit_environment_permission_code(environment_slug),
-    }
-    .ok_or_else(|| ApiError::validation("Unsupported environment slug."))?;
+    let permission_code = edit_environment_permission_code(environment_slug);
 
     require_permission(state, &user.id, permission_code).await
 }
@@ -417,21 +413,10 @@ fn future_utc(ttl_hours: i64) -> AppResult<String> {
 // Permission code helpers for environments
 // ---------------------------------------------------------------------------
 
-fn read_environment_permission_code(environment_slug: &str) -> Option<&'static str> {
+fn edit_environment_permission_code(environment_slug: &str) -> &'static str {
     match environment_slug {
-        "development" => Some("ReadDevelopment"),
-        "staging" => Some("ReadStaging"),
-        "production" => Some("ReadProduction"),
-        _ => None,
-    }
-}
-
-fn edit_environment_permission_code(environment_slug: &str) -> Option<&'static str> {
-    match environment_slug {
-        "development" => Some("EditDevelopment"),
-        "staging" => Some("EditStaging"),
-        "production" => Some("EditProduction"),
-        _ => None,
+        "production" => "EditProd",
+        _ => "EditAll",
     }
 }
 
@@ -510,33 +495,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn environment_permission_codes_match_supported_slugs() {
-        assert_eq!(
-            read_environment_permission_code("development"),
-            Some("ReadDevelopment")
-        );
-        assert_eq!(
-            read_environment_permission_code("staging"),
-            Some("ReadStaging")
-        );
-        assert_eq!(
-            read_environment_permission_code("production"),
-            Some("ReadProduction")
-        );
-        assert_eq!(
-            edit_environment_permission_code("development"),
-            Some("EditDevelopment")
-        );
-        assert_eq!(
-            edit_environment_permission_code("staging"),
-            Some("EditStaging")
-        );
-        assert_eq!(
-            edit_environment_permission_code("production"),
-            Some("EditProduction")
-        );
-        assert_eq!(read_environment_permission_code("prod"), None);
-        assert_eq!(edit_environment_permission_code("qa"), None);
+    fn environment_edit_permission_codes_group_non_production_slugs() {
+        assert_eq!(edit_environment_permission_code("development"), "EditAll");
+        assert_eq!(edit_environment_permission_code("staging"), "EditAll");
+        assert_eq!(edit_environment_permission_code("qa"), "EditAll");
+        assert_eq!(edit_environment_permission_code("production"), "EditProd");
     }
 
     #[test]

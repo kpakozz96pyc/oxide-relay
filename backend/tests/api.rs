@@ -446,7 +446,7 @@ async fn admin_user_permissions_and_project_members_endpoints_work() {
                 .header(header::COOKIE, admin_cookie.as_str())
                 .body(Body::from(
                     json!({
-                        "permission_codes": ["ViewProjects", "ReadTranslations", "ReadProduction"]
+                        "permission_codes": ["ViewProjects", "ReadTranslations", "EditAll"]
                     })
                     .to_string(),
                 ))
@@ -475,7 +475,7 @@ async fn admin_user_permissions_and_project_members_endpoints_work() {
         .request(
             Request::builder()
                 .method("GET")
-                .uri("/api/v1/users/summary?search=managed&permission=ReadProduction&status=active")
+                .uri("/api/v1/users/summary?search=managed&permission=EditAll&status=active")
                 .header(header::COOKIE, admin_cookie.as_str())
                 .body(Body::empty())
                 .expect("request"),
@@ -1144,12 +1144,7 @@ async fn translation_crud_import_export_and_environment_acl_work() {
     harness
         .assign_permissions(
             &member_id,
-            &[
-                "EditTranslations",
-                "ReadTranslations",
-                "ExportTranslations",
-                "ImportTranslations",
-            ],
+            &["EditTranslations", "ExportTranslations", "ImportTranslations"],
         )
         .await;
 
@@ -1302,7 +1297,7 @@ async fn translation_crud_import_export_and_environment_acl_work() {
     assert_eq!(forbidden_body["error"]["code"], "PermissionDenied");
 
     harness
-        .assign_permissions(&member_id, &["ReadProduction"])
+        .assign_permissions(&member_id, &["ReadTranslations"])
         .await;
     let allowed = harness
         .request(
@@ -1331,6 +1326,121 @@ async fn translation_crud_import_export_and_environment_acl_work() {
         .await;
 
     assert_eq!(delete_translation.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn custom_environments_use_edit_all_and_production_uses_edit_prod() {
+    let harness = TestHarness::new().await;
+    let owner_id = harness
+        .insert_user("environment-owner@example.com", "owner-password", "Environment Owner", true)
+        .await;
+    let member_id = harness
+        .insert_user("environment-member@example.com", "member-password", "Environment Member", true)
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Environment Project", "environment-project")
+        .await;
+    harness.add_project_access(&member_id, &project_id).await;
+    harness.insert_namespace(&project_id, "common").await;
+    harness.insert_language(&project_id, "en", "English").await;
+    harness.insert_environment(&project_id, "QA", "qa").await;
+    harness
+        .insert_environment(&project_id, "Production", "production")
+        .await;
+    harness
+        .assign_permissions(&member_id, &["ReadTranslations"])
+        .await;
+
+    let member_cookie = harness
+        .login("environment-member@example.com", "member-password")
+        .await;
+    let read_qa = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/environment-project/translations?environment=qa")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(read_qa.status(), StatusCode::OK);
+
+    harness
+        .assign_permissions(&member_id, &["EditTranslations", "EditAll"])
+        .await;
+
+    let create_qa = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/environment-project/translations")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "environment": "qa",
+                        "language": "en",
+                        "namespace": "common",
+                        "key": "feature.enabled",
+                        "value": "Enabled"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(create_qa.status(), StatusCode::CREATED);
+
+    let create_production_without_permission = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/environment-project/translations")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "environment": "production",
+                        "language": "en",
+                        "namespace": "common",
+                        "key": "feature.enabled",
+                        "value": "Enabled"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(
+        create_production_without_permission.status(),
+        StatusCode::FORBIDDEN
+    );
+
+    harness
+        .assign_permissions(&member_id, &["EditTranslations", "EditProd"])
+        .await;
+    let create_production = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/environment-project/translations")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "environment": "production",
+                        "language": "en",
+                        "namespace": "common",
+                        "key": "feature.enabled",
+                        "value": "Enabled"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(create_production.status(), StatusCode::CREATED);
 }
 
 struct TestHarness {

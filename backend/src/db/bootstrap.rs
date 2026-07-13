@@ -143,11 +143,10 @@ fn permissions_catalog() -> &'static [(&'static str, &'static str)] {
             "ExportTranslations",
             "Export translations as JSON payloads.",
         ),
-        ("ReadDevelopment", "Read development translations."),
-        ("ReadStaging", "Read staging translations."),
-        ("ReadProduction", "Read production translations."),
-        ("EditDevelopment", "Modify development translations."),
-        ("EditStaging", "Modify staging translations."),
-        ("EditProduction", "Modify production translations."),
+        (
+            "EditAll",
+            "Modify translations in every environment except production.",
+        ),
+        ("EditProd", "Modify translations in the production environment."),
     ]
 }

@@ -1078,7 +1078,7 @@ th {
 .environment-matrix-header,
 .environment-matrix-row {
   display: grid;
-  grid-template-columns: minmax(90px, 120px) repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(90px, 120px) repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
   align-items: center;
 }

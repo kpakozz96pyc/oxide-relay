@@ -154,7 +154,9 @@ A user can have:
 * Direct permissions
 * Access to specific projects
 
-In MVP, environment access is enforced through environment-specific permissions such as `ReadProduction` and `EditStaging`.
+Project members with `ReadTranslations` can read translations in every environment.
+Environment writes require `EditAll` for every environment except `production`, or
+`EditProd` for `production`.
 
 There is no separate environment membership table in MVP.
 
@@ -213,13 +215,8 @@ ExportTranslations
 ### Environments
 
 ```text
-ReadDevelopment
-ReadStaging
-ReadProduction
-
-EditDevelopment
-EditStaging
-EditProduction
+EditAll
+EditProd
 ```
 
 ### Publishing (Future)

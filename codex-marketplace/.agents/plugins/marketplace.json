@@ -1,0 +1,20 @@
+{
+  "name": "oxiderelay",
+  "interface": {
+    "displayName": "OxideRelay Development"
+  },
+  "plugins": [
+    {
+      "name": "checkandcommit",
+      "source": {
+        "source": "local",
+        "path": "./plugins/checkandcommit"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Development"
+    }
+  ]
+}

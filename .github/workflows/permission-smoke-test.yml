@@ -1,0 +1,11 @@
+name: Permission Smoke Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm workflow file write permission
+        run: echo "workflow permission smoke test"

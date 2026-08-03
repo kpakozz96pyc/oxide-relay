@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXAMPLE_ENV_FILE="${ROOT_DIR}/.env.example"
 RUNTIME_ENV_FILE="${ROOT_DIR}/.env"
 RUNTIME_ENV_BACKUP=""
+RUNTIME_ENV_PREPARED=0
+STACK_STARTED=0
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-oxiderelay-smoke}"
 export COMPOSE_PROJECT_NAME
 export OXIDERELAY_IMAGE="${OXIDERELAY_IMAGE:-oxiderelay:smoke}"
@@ -20,7 +22,7 @@ TRANSLATION_VALUE="${TRANSLATION_VALUE:-Oxide Relay Smoke}"
 COOKIE_JAR="$(mktemp)"
 BODY_FILE="$(mktemp)"
 
-COMPOSE_CMD=(docker compose --env-file "${EXAMPLE_ENV_FILE}" -f "${ROOT_DIR}/compose.yaml")
+COMPOSE_CMD=(docker compose --env-file "${RUNTIME_ENV_FILE}" -f "${ROOT_DIR}/compose.yaml")
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -41,19 +43,24 @@ prepare_runtime_env_file() {
   fi
 
   cp "${EXAMPLE_ENV_FILE}" "${RUNTIME_ENV_FILE}"
+  RUNTIME_ENV_PREPARED=1
 }
 
 cleanup() {
   status=$?
-  if [ "$status" -ne 0 ]; then
+  if [ "$status" -ne 0 ] && [ "${STACK_STARTED}" -eq 1 ]; then
     echo "Smoke test failed. Docker Compose logs:" >&2
     "${COMPOSE_CMD[@]}" logs --no-color || true
   fi
-  "${COMPOSE_CMD[@]}" down -v --remove-orphans || true
-  if [ -n "${RUNTIME_ENV_BACKUP}" ] && [ -f "${RUNTIME_ENV_BACKUP}" ]; then
-    mv "${RUNTIME_ENV_BACKUP}" "${RUNTIME_ENV_FILE}" || true
-  else
-    rm -f "${RUNTIME_ENV_FILE}"
+  if [ "${STACK_STARTED}" -eq 1 ]; then
+    "${COMPOSE_CMD[@]}" down -v --remove-orphans || true
+  fi
+  if [ "${RUNTIME_ENV_PREPARED}" -eq 1 ]; then
+    if [ -n "${RUNTIME_ENV_BACKUP}" ] && [ -f "${RUNTIME_ENV_BACKUP}" ]; then
+      mv "${RUNTIME_ENV_BACKUP}" "${RUNTIME_ENV_FILE}" || true
+    else
+      rm -f "${RUNTIME_ENV_FILE}"
+    fi
   fi
   rm -f "${COOKIE_JAR}" "${BODY_FILE}"
 }
@@ -79,6 +86,7 @@ echo "Resetting compose project ${COMPOSE_PROJECT_NAME}..."
 "${COMPOSE_CMD[@]}" down -v --remove-orphans || true
 
 echo "Starting Docker Compose stack..."
+STACK_STARTED=1
 "${COMPOSE_CMD[@]}" up -d
 
 echo "Waiting for health endpoint..."

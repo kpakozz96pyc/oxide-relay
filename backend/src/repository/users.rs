@@ -110,6 +110,59 @@ pub async fn find_row_by_id(pool: &SqlitePool, user_id: &str) -> AppResult<UserR
     .ok_or_else(|| ApiError::not_found("User was not found."))
 }
 
+pub async fn ensure_not_last_active_manage_users(
+    pool: &SqlitePool,
+    user_id: &str,
+) -> AppResult<()> {
+    let target_user = find_row_by_id(pool, user_id).await?;
+
+    if !target_user.is_active {
+        return Ok(());
+    }
+
+    let target_manage_users_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM user_permissions up
+        JOIN permissions p ON p.id = up.permission_id
+        WHERE up.user_id = ?1
+          AND p.code = 'ManageUsers'
+        "#,
+    )
+    .bind(&target_user.id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to verify administrator permissions."))?;
+
+    if target_manage_users_count == 0 {
+        return Ok(());
+    }
+
+    let other_active_manage_users_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(DISTINCT u.id)
+        FROM users u
+        JOIN user_permissions up ON up.user_id = u.id
+        JOIN permissions p ON p.id = up.permission_id
+        WHERE u.id != ?1
+          AND u.is_active = 1
+          AND p.code = 'ManageUsers'
+        "#,
+    )
+    .bind(&target_user.id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to verify administrator availability."))?;
+
+    if other_active_manage_users_count == 0 {
+        return Err(ApiError::validation(
+            "Cannot remove, deactivate, or strip ManageUsers from the last active administrator.",
+        ));
+    }
+
+    Ok(())
+}
+
 pub async fn list(pool: &SqlitePool) -> AppResult<Vec<UserRecord>> {
     sqlx::query_as::<_, UserRecord>(
         r#"
@@ -343,6 +396,10 @@ pub async fn update(
         .map(hash_password)
         .transpose()?;
 
+    if existing.is_active && !is_active {
+        ensure_not_last_active_manage_users(pool, user_id).await?;
+    }
+
     sqlx::query(
         r#"
         UPDATE users
@@ -375,6 +432,8 @@ pub async fn update(
 }
 
 pub async fn delete(pool: &SqlitePool, user_id: &str) -> AppResult<()> {
+    ensure_not_last_active_manage_users(pool, user_id).await?;
+
     let result = sqlx::query("DELETE FROM users WHERE id = ?1")
         .bind(user_id)
         .execute(pool)

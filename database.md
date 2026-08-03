@@ -27,9 +27,8 @@ The project owner is treated as being able to perform any action inside the owne
 
 ## Migration Policy
 
-Before `0.1.0`, breaking migrations are allowed and data is disposable. Starting
-with `0.1.0`, only forward-only migrations are allowed and existing data must be
-preserved through documented upgrade paths.
+Before `0.1.0`, breaking migrations are allowed and development data is disposable.
+Starting with `0.1.0`, use forward-only migrations only and do not rewrite migration history.
 
 ---
 

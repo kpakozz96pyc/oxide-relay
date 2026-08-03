@@ -42,9 +42,8 @@
 ## Data and Version Policy
 
 - The current project version is `0.0.9` and is pre-`0.1.0` development.
-- Before `0.1.0`, breaking migrations are allowed and data is disposable.
-- Starting with `0.1.0`, only forward-only migrations are allowed. Preserve
-  existing data and do not rewrite migrations after that point.
+- Before `0.1.0`, breaking migrations are allowed and development data is disposable.
+- Starting with `0.1.0`, use forward-only migrations only and do not rewrite migration history.
 
 ## Verification and Git
 

@@ -2,7 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${ROOT_DIR}/.env.example"
+EXAMPLE_ENV_FILE="${ROOT_DIR}/.env.example"
+RUNTIME_ENV_FILE="${ROOT_DIR}/.env"
+RUNTIME_ENV_BACKUP=""
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-oxiderelay-smoke}"
 export COMPOSE_PROJECT_NAME
 export OXIDERELAY_IMAGE="${OXIDERELAY_IMAGE:-oxiderelay:smoke}"
@@ -18,13 +20,27 @@ TRANSLATION_VALUE="${TRANSLATION_VALUE:-Oxide Relay Smoke}"
 COOKIE_JAR="$(mktemp)"
 BODY_FILE="$(mktemp)"
 
-COMPOSE_CMD=(docker compose --env-file "${ENV_FILE}" -f "${ROOT_DIR}/compose.yaml")
+COMPOSE_CMD=(docker compose --env-file "${EXAMPLE_ENV_FILE}" -f "${ROOT_DIR}/compose.yaml")
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "Required command not found: $1" >&2
     exit 1
   }
+}
+
+prepare_runtime_env_file() {
+  [ -f "${EXAMPLE_ENV_FILE}" ] || {
+    echo "Missing env template: ${EXAMPLE_ENV_FILE}" >&2
+    exit 1
+  }
+
+  if [ -f "${RUNTIME_ENV_FILE}" ]; then
+    RUNTIME_ENV_BACKUP="$(mktemp)"
+    cp "${RUNTIME_ENV_FILE}" "${RUNTIME_ENV_BACKUP}"
+  fi
+
+  cp "${EXAMPLE_ENV_FILE}" "${RUNTIME_ENV_FILE}"
 }
 
 cleanup() {
@@ -34,6 +50,11 @@ cleanup() {
     "${COMPOSE_CMD[@]}" logs --no-color || true
   fi
   "${COMPOSE_CMD[@]}" down -v --remove-orphans || true
+  if [ -n "${RUNTIME_ENV_BACKUP}" ] && [ -f "${RUNTIME_ENV_BACKUP}" ]; then
+    mv "${RUNTIME_ENV_BACKUP}" "${RUNTIME_ENV_FILE}" || true
+  else
+    rm -f "${RUNTIME_ENV_FILE}"
+  fi
   rm -f "${COOKIE_JAR}" "${BODY_FILE}"
 }
 trap cleanup EXIT
@@ -47,6 +68,9 @@ docker compose version >/dev/null 2>&1 || {
 }
 
 cd "${ROOT_DIR}"
+
+echo "Preparing compose env file..."
+prepare_runtime_env_file
 
 echo "Building local image ${OXIDERELAY_IMAGE}..."
 docker build -f deploy/Dockerfile -t "${OXIDERELAY_IMAGE}" .

@@ -12,12 +12,11 @@ OxideRelay acts as a single source of truth for localization data used by fronte
 
 Current version: `0.0.9`.
 
-OxideRelay is in active pre-`0.1.0` development. The database schema and data
-are not upgrade-compatible during this phase; use only disposable development
-data and recreate the SQLite database after incompatible changes.
+OxideRelay is in active pre-`0.1.0` development.
 
-Starting with `0.1.0`, releases will preserve existing data through forward-only
-migrations and documented upgrade paths.
+Before `0.1.0`, breaking migrations are allowed and data is disposable. Starting
+with `0.1.0`, only forward-only migrations are allowed and existing data must be
+preserved through documented upgrade paths.
 
 ---
 

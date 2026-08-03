@@ -42,10 +42,9 @@
 ## Data and Version Policy
 
 - The current project version is `0.0.9` and is pre-`0.1.0` development.
-- Before `0.1.0`, schema and data upgrade compatibility is not supported; use
-  disposable development data after incompatible changes.
-- Starting with `0.1.0`, preserve data through forward-only migrations. Do not
-  rewrite migration history after that point.
+- Before `0.1.0`, breaking migrations are allowed and data is disposable.
+- Starting with `0.1.0`, only forward-only migrations are allowed. Preserve
+  existing data and do not rewrite migrations after that point.
 
 ## Verification and Git
 

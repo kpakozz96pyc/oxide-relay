@@ -25,6 +25,11 @@ For project-scoped authorization, project ownership is evaluated before checking
 
 The project owner is treated as being able to perform any action inside the owned project through implicit project-scoped and environment-scoped permissions.
 
+## Migration Policy
+
+Before `0.1.0`, breaking migrations are allowed and development data is disposable.
+Starting with `0.1.0`, use forward-only migrations only and do not rewrite migration history.
+
 ---
 
 # General Rules

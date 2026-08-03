@@ -534,6 +534,28 @@ Unversioned static URLs still work and use short TTL plus revalidation headers.
 
 ---
 
+# Security Model
+
+OxideRelay has two exposure classes in MVP:
+
+* Admin UI and management APIs use session authentication and are intended for trusted operators.
+* Delivery endpoints are public in MVP and do not use session authentication:
+  * REST locale bundle delivery under `/api/v1/projects/{project}/locales/{locale}`
+  * Delivery manifest endpoints under `/api/v1/projects/{project}/delivery-manifest/{locale}`
+  * Static JSON delivery under `/static/{project}/{environment}/{locale}/{namespace}.json`
+
+Treat any project or environment exposed through those delivery endpoints as public content.
+
+Private translations must not be exposed to the public internet without reverse proxy/VPN protection in front of OxideRelay.
+
+Recommended deployment controls:
+
+* Prefer running OxideRelay on an internal network or private subnet.
+* If external access is required, place OxideRelay behind a reverse proxy with authentication and TLS, or behind a VPN, before requests reach the service.
+* Restrict inbound access with firewall or security-group rules so only trusted users and applications can reach the service.
+
+---
+
 # Deployment
 
 OxideRelay is designed for simple installation and operation.

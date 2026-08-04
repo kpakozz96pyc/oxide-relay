@@ -6,7 +6,7 @@ args = [
 ]
 enabled = true
 required = false
-default_tools_approval_mode = "writes"
+default_tools_approval_mode = "approve"
 enabled_tools = [
   "list_projects",
   "retrieve_project",
@@ -16,6 +16,7 @@ enabled_tools = [
   "search_work_items",
   "create_work_item",
   "update_work_item",
+  "delete_work_item",
   "list_states",
   "list_labels",
   "list_work_item_comments",
@@ -23,11 +24,5 @@ enabled_tools = [
   "list_work_item_activities",
 ]
 
-[mcp_servers.plane.tools.create_work_item]
-approval_mode = "prompt"
-
-[mcp_servers.plane.tools.update_work_item]
-approval_mode = "prompt"
-
-[mcp_servers.plane.tools.create_work_item_comment]
+[mcp_servers.plane.tools.delete_work_item]
 approval_mode = "prompt"

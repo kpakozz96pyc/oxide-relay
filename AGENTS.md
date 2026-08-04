@@ -65,3 +65,14 @@
 - `/checkandcommit` runs relevant checks, verifies documentation consistency,
   requests approval before documentation fixes, and commits only the reviewed
   changes. It never pushes automatically.
+
+## Plane Work Items
+
+- Plane is available through the project-scoped `plane` MCP server. When the
+  user references an `OXR-*` work item or the Plane backlog, retrieve the work
+  item through Plane MCP before planning or changing code.
+- Treat Plane as task coordination, not as the implementation source of truth.
+  Reconcile its requirements with this guide and the repository before edits.
+- Reading Plane is allowed when needed for task context. Create, update,
+  comment on, transition, or delete Plane data only when the user explicitly
+  requests that mutation, and report the resulting change.

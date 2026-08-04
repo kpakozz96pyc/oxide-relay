@@ -5,6 +5,7 @@
 **/dist/
 *.tsbuildinfo
 /.env
+/.secrets/
 /backend/.sqlx
 /data
 /tmp

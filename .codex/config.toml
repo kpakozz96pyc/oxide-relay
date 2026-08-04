@@ -1,0 +1,33 @@
+[mcp_servers.plane]
+command = "bash"
+args = [
+  "-lc",
+  "repo_root=$(git rev-parse --show-toplevel) && export PLANE_API_KEY=$(jq -er .plane \"$repo_root/.secrets/secrets.json\") && export PLANE_WORKSPACE_SLUG=zeroclaw_kpakozz96pyc && export PLANE_BASE_URL=https://api.plane.so && exec uvx plane-mcp-server==0.2.10 stdio",
+]
+enabled = true
+required = false
+default_tools_approval_mode = "writes"
+enabled_tools = [
+  "list_projects",
+  "retrieve_project",
+  "list_work_items",
+  "retrieve_work_item",
+  "retrieve_work_item_by_identifier",
+  "search_work_items",
+  "create_work_item",
+  "update_work_item",
+  "list_states",
+  "list_labels",
+  "list_work_item_comments",
+  "create_work_item_comment",
+  "list_work_item_activities",
+]
+
+[mcp_servers.plane.tools.create_work_item]
+approval_mode = "prompt"
+
+[mcp_servers.plane.tools.update_work_item]
+approval_mode = "prompt"
+
+[mcp_servers.plane.tools.create_work_item_comment]
+approval_mode = "prompt"

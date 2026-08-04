@@ -33,6 +33,8 @@ use crate::{
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        crate::http::health,
+        crate::http::docs::openapi_json,
         crate::auth::login,
         crate::auth::logout,
         crate::auth::me,
@@ -81,6 +83,7 @@ use crate::{
         crate::http::delivery::static_namespace_file,
     ),
     components(schemas(
+        crate::http::HealthResponse,
         ErrorResponse,
         LoginRequest,
         AuthResponse,
@@ -137,6 +140,11 @@ use crate::{
 )]
 pub struct ApiDoc;
 
+#[utoipa::path(
+    get,
+    path = "/api/openapi.json",
+    responses((status = 200, body = Object))
+)]
 pub async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
 }

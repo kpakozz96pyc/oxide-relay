@@ -20,6 +20,7 @@ use tower_http::{
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
+use utoipa::ToSchema;
 
 use crate::{app::AppState, auth};
 
@@ -195,6 +196,14 @@ async fn root() -> &'static str {
     "OxideRelay backend is running."
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    responses(
+        (status = 200, body = HealthResponse),
+        (status = 503, body = HealthResponse)
+    )
+)]
 async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
     match sqlx::query_scalar::<_, i64>("SELECT 1")
         .fetch_one(&state.pool)
@@ -219,7 +228,7 @@ async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthRespon
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct HealthResponse {
     status: &'static str,
     database: &'static str,

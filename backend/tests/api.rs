@@ -147,6 +147,123 @@ async fn health_endpoint_reflects_database_readiness() {
 }
 
 #[tokio::test]
+async fn openapi_document_matches_the_registered_api_surface() {
+    const EXPECTED_PATHS: &[(&str, &[&str])] = &[
+        ("/api/health", &["get"]),
+        ("/api/openapi.json", &["get"]),
+        ("/api/v1/auth/login", &["post"]),
+        ("/api/v1/auth/logout", &["post"]),
+        ("/api/v1/auth/reset-password", &["post"]),
+        ("/api/v1/me", &["get"]),
+        ("/api/v1/me/permissions", &["get"]),
+        ("/api/v1/users", &["get", "post"]),
+        ("/api/v1/users/summary", &["get"]),
+        ("/api/v1/users/{id}", &["delete", "put"]),
+        ("/api/v1/users/{id}/password-reset-link", &["post"]),
+        ("/api/v1/projects/catalog", &["get"]),
+        ("/api/v1/permissions", &["get"]),
+        ("/api/v1/users/{id}/permissions", &["get", "put"]),
+        ("/api/v1/users/{id}/project-access", &["get", "post"]),
+        (
+            "/api/v1/users/{id}/project-access/{project_slug}",
+            &["delete"],
+        ),
+        ("/api/v1/projects", &["get", "post"]),
+        ("/api/v1/projects/{project_slug}", &["delete", "get", "put"]),
+        (
+            "/api/v1/projects/{project_slug}/languages",
+            &["get", "post"],
+        ),
+        (
+            "/api/v1/projects/{project_slug}/languages/{language_code}",
+            &["delete"],
+        ),
+        (
+            "/api/v1/projects/{project_slug}/namespaces",
+            &["get", "post"],
+        ),
+        (
+            "/api/v1/projects/{project_slug}/namespaces/{namespace}",
+            &["delete"],
+        ),
+        (
+            "/api/v1/projects/{project_slug}/environments",
+            &["get", "post"],
+        ),
+        (
+            "/api/v1/projects/{project_slug}/environments/{environment_slug}",
+            &["delete"],
+        ),
+        ("/api/v1/projects/{project_slug}/members", &["get", "post"]),
+        (
+            "/api/v1/projects/{project_slug}/members/{user_id}",
+            &["delete"],
+        ),
+        (
+            "/api/v1/projects/{project_slug}/translations",
+            &["get", "post"],
+        ),
+        (
+            "/api/v1/projects/{project_slug}/translations/grid",
+            &["get"],
+        ),
+        (
+            "/api/v1/projects/{project_slug}/translations/{translation_value_id}",
+            &["delete", "put"],
+        ),
+        ("/api/v1/projects/{project_slug}/imports/json", &["post"]),
+        ("/api/v1/projects/{project_slug}/exports/json", &["get"]),
+        (
+            "/api/v1/projects/{project_slug}/delivery-metadata",
+            &["get"],
+        ),
+        (
+            "/api/v1/projects/{project_slug}/locales/{language_code}",
+            &["get"],
+        ),
+        (
+            "/api/v1/projects/{project_slug}/delivery-manifest/{language_code}",
+            &["get"],
+        ),
+        (
+            "/static/{project_slug}/{environment_slug}/{language_code}/{namespace}.json",
+            &["get"],
+        ),
+    ];
+
+    let harness = TestHarness::new().await;
+    let response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/openapi.json")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let document = json_body(response).await;
+    assert_eq!(document["info"]["version"], env!("CARGO_PKG_VERSION"));
+
+    let paths = document["paths"].as_object().expect("OpenAPI paths object");
+    assert_eq!(paths.len(), EXPECTED_PATHS.len());
+
+    for (path, expected_methods) in EXPECTED_PATHS {
+        let path_item = paths
+            .get(*path)
+            .unwrap_or_else(|| panic!("OpenAPI path is missing: {path}"))
+            .as_object()
+            .expect("OpenAPI path item");
+        let mut actual_methods = path_item.keys().map(String::as_str).collect::<Vec<_>>();
+        actual_methods.sort_unstable();
+        assert_eq!(actual_methods, *expected_methods, "methods for {path}");
+    }
+
+    assert!(document["components"]["schemas"]["HealthResponse"].is_object());
+}
+
+#[tokio::test]
 async fn project_owner_has_implicit_access_but_member_without_permission_is_forbidden() {
     let harness = TestHarness::new().await;
     let owner_id = harness

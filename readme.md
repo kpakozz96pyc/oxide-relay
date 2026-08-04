@@ -288,6 +288,7 @@ For non-owners, project membership management requires `ManageProjectMembers` wi
 Translation delivery for backend applications.
 
 In MVP, translation delivery endpoints are public and do not use session authentication.
+The generated OpenAPI document is available at `GET /api/openapi.json`.
 
 ---
 

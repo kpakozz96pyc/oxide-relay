@@ -287,7 +287,8 @@ For non-owners, project membership management requires `ManageProjectMembers` wi
 
 Translation delivery for backend applications.
 
-In MVP, translation delivery endpoints are public and do not use session authentication.
+Delivery endpoints are public by default and do not use admin session authentication.
+They can be disabled globally or protected with one deployment-wide shared Bearer token.
 The generated OpenAPI document is available at `GET /api/openapi.json`.
 
 ---
@@ -313,6 +314,8 @@ OXIDERELAY_FRONTEND_DIST_PATH
 OXIDERELAY_SESSION_COOKIE_NAME
 OXIDERELAY_SESSION_TTL_HOURS
 OXIDERELAY_SESSION_COOKIE_SECURE
+OXIDERELAY_PUBLIC_DELIVERY_ENABLED
+OXIDERELAY_DELIVERY_TOKEN
 OXIDERELAY_ADMIN_EMAIL
 OXIDERELAY_ADMIN_PASSWORD
 ```
@@ -328,6 +331,27 @@ cookie_secure = false
 For local development, keep `cookie_secure=false`.
 
 For HTTPS deployments, set `OXIDERELAY_SESSION_COOKIE_SECURE=true`.
+
+Delivery defaults:
+
+```text
+public_delivery_enabled = true
+delivery_token = unset
+```
+
+Set `OXIDERELAY_PUBLIC_DELIVERY_ENABLED=false` to make all REST and static
+delivery endpoints return `404`. This does not disable the admin UI or management API.
+
+Set a non-empty `OXIDERELAY_DELIVERY_TOKEN` to require the following header on
+all delivery requests:
+
+```http
+Authorization: Bearer <OXIDERELAY_DELIVERY_TOKEN>
+```
+
+The token is a single deployment-wide shared secret, not an API-key or user
+identity system. Use HTTPS whenever it is enabled. Protected responses use
+private client caching and vary by the `Authorization` header.
 
 ### Login Rate Limit
 
@@ -504,7 +528,8 @@ the response is cacheable as immutable content.
 
 Translation delivery for frontend applications.
 
-In MVP, static JSON endpoints are public.
+Static JSON endpoints follow the same public-delivery and Bearer-token settings
+as REST delivery endpoints.
 
 Recommended flow:
 
@@ -513,6 +538,8 @@ GET /api/v1/projects/hr-portal/delivery-manifest/ru?environment=production
 ```
 
 The manifest returns versioned URLs for the locale bundle and each namespace JSON file.
+When a delivery token is configured, clients must send the Bearer header when
+fetching both the manifest and every URL returned by it.
 
 Example:
 
@@ -540,19 +567,23 @@ Unversioned static URLs still work and use short TTL plus revalidation headers.
 OxideRelay has two exposure classes in MVP:
 
 * Admin UI and management APIs use session authentication and are intended for trusted operators.
-* Delivery endpoints are public in MVP and do not use session authentication:
+* Delivery endpoints do not use admin sessions and are public by default, globally disabled, or protected by one shared Bearer token:
+  * Delivery metadata under `/api/v1/projects/{project}/delivery-metadata`
   * REST locale bundle delivery under `/api/v1/projects/{project}/locales/{locale}`
   * Delivery manifest endpoints under `/api/v1/projects/{project}/delivery-manifest/{locale}`
   * Static JSON delivery under `/static/{project}/{environment}/{locale}/{namespace}.json`
 
-Treat any project or environment exposed through those delivery endpoints as public content.
+The shared token has no per-project scopes, per-client identity, expiry, or
+server-managed rotation. Treat content as public unless the token is configured
+and distributed only to trusted clients.
 
-Private translations must not be exposed to the public internet without reverse proxy/VPN protection in front of OxideRelay.
+Private translations must not be exposed to the public internet without HTTPS
+and either the shared delivery token or reverse proxy/VPN protection in front of OxideRelay.
 
 Recommended deployment controls:
 
 * Prefer running OxideRelay on an internal network or private subnet.
-* If external access is required, place OxideRelay behind a reverse proxy with authentication and TLS, or behind a VPN, before requests reach the service.
+* If external access is required, enable the delivery token and TLS, or place OxideRelay behind a reverse proxy with authentication and TLS, or behind a VPN.
 * Restrict inbound access with firewall or security-group rules so only trusted users and applications can reach the service.
 
 ---

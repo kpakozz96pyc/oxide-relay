@@ -1,15 +1,20 @@
 use sqlx::SqlitePool;
 
-use crate::config::SessionSettings;
+use crate::config::{DeliverySettings, SessionSettings};
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub session: SessionSettings,
+    pub delivery: DeliverySettings,
 }
 
 impl AppState {
-    pub fn new(pool: SqlitePool, session: SessionSettings) -> Self {
-        Self { pool, session }
+    pub fn new(pool: SqlitePool, session: SessionSettings, delivery: DeliverySettings) -> Self {
+        Self {
+            pool,
+            session,
+            delivery,
+        }
     }
 }

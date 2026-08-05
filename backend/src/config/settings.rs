@@ -8,6 +8,7 @@ pub struct Settings {
     pub server: ServerSettings,
     pub database: DatabaseSettings,
     pub session: SessionSettings,
+    pub delivery: DeliverySettings,
     pub bootstrap_admin: BootstrapAdminSettings,
     pub frontend: FrontendSettings,
 }
@@ -99,6 +100,30 @@ impl Settings {
             .transpose()?
             .unwrap_or(false);
 
+        let public_delivery_enabled = cli
+            .public_delivery_enabled
+            .or_else(|| env("OXIDERELAY_PUBLIC_DELIVERY_ENABLED"))
+            .or_else(|| {
+                file_settings
+                    .delivery
+                    .as_ref()
+                    .and_then(|delivery| delivery.public_enabled.clone())
+            })
+            .map(|value| parse_bool_flag(&value))
+            .transpose()?
+            .unwrap_or(true);
+
+        let delivery_token = cli
+            .delivery_token
+            .or_else(|| env("OXIDERELAY_DELIVERY_TOKEN"))
+            .or_else(|| {
+                file_settings
+                    .delivery
+                    .as_ref()
+                    .and_then(|delivery| delivery.token.clone())
+            })
+            .and_then(non_empty_trimmed);
+
         let admin_email = cli
             .admin_email
             .or_else(|| env("OXIDERELAY_ADMIN_EMAIL"))
@@ -140,6 +165,10 @@ impl Settings {
                 ttl_hours: session_ttl_hours,
                 cookie_secure: session_cookie_secure,
             },
+            delivery: DeliverySettings {
+                public_enabled: public_delivery_enabled,
+                token: delivery_token,
+            },
             bootstrap_admin: BootstrapAdminSettings {
                 email: admin_email,
                 password: admin_password,
@@ -173,6 +202,21 @@ pub struct SessionSettings {
     pub cookie_name: String,
     pub ttl_hours: i64,
     pub cookie_secure: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeliverySettings {
+    pub public_enabled: bool,
+    pub token: Option<String>,
+}
+
+impl Default for DeliverySettings {
+    fn default() -> Self {
+        Self {
+            public_enabled: true,
+            token: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -210,6 +254,10 @@ struct Cli {
     session_ttl_hours: Option<String>,
     #[arg(long = "session-cookie-secure")]
     session_cookie_secure: Option<String>,
+    #[arg(long = "public-delivery-enabled")]
+    public_delivery_enabled: Option<String>,
+    #[arg(long = "delivery-token")]
+    delivery_token: Option<String>,
     #[arg(long = "admin-email")]
     admin_email: Option<String>,
     #[arg(long = "admin-password")]
@@ -223,6 +271,7 @@ struct ConfigFile {
     server: Option<FileServerSettings>,
     database: Option<FileDatabaseSettings>,
     session: Option<FileSessionSettings>,
+    delivery: Option<FileDeliverySettings>,
     bootstrap_admin: Option<FileBootstrapAdminSettings>,
     frontend: Option<FileFrontendSettings>,
 }
@@ -257,6 +306,12 @@ struct FileSessionSettings {
 }
 
 #[derive(Debug, Deserialize)]
+struct FileDeliverySettings {
+    public_enabled: Option<String>,
+    token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct FileBootstrapAdminSettings {
     email: Option<String>,
     password: Option<String>,
@@ -275,6 +330,11 @@ fn parse_bool_flag(raw: &str) -> Result<bool, Box<dyn std::error::Error>> {
     }
 }
 
+fn non_empty_trimmed(raw: String) -> Option<String> {
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +349,8 @@ mod tests {
             session_cookie_name: None,
             session_ttl_hours: None,
             session_cookie_secure: None,
+            public_delivery_enabled: None,
+            delivery_token: None,
             admin_email: None,
             admin_password: None,
             frontend_dist_path: None,
@@ -302,6 +364,7 @@ mod tests {
             port: Some("9090".to_owned()),
             session_cookie_name: Some("cli_cookie".to_owned()),
             session_ttl_hours: Some("72".to_owned()),
+            public_delivery_enabled: Some("false".to_owned()),
             ..cli_defaults()
         };
         let file = ConfigFile {
@@ -316,6 +379,10 @@ mod tests {
                 cookie_name: Some("file_cookie".to_owned()),
                 ttl_hours: Some("24".to_owned()),
                 cookie_secure: Some("false".to_owned()),
+            }),
+            delivery: Some(FileDeliverySettings {
+                public_enabled: Some("true".to_owned()),
+                token: Some("file-delivery-token".to_owned()),
             }),
             bootstrap_admin: Some(FileBootstrapAdminSettings {
                 email: Some("file-admin@example.com".to_owned()),
@@ -334,6 +401,10 @@ mod tests {
             (
                 "OXIDERELAY_SESSION_COOKIE_SECURE".to_owned(),
                 "true".to_owned(),
+            ),
+            (
+                "OXIDERELAY_DELIVERY_TOKEN".to_owned(),
+                "env-delivery-token".to_owned(),
             ),
             (
                 "OXIDERELAY_ADMIN_EMAIL".to_owned(),
@@ -357,6 +428,11 @@ mod tests {
         assert_eq!(settings.session.cookie_name, "cli_cookie");
         assert_eq!(settings.session.ttl_hours, 72);
         assert!(settings.session.cookie_secure);
+        assert!(!settings.delivery.public_enabled);
+        assert_eq!(
+            settings.delivery.token.as_deref(),
+            Some("env-delivery-token")
+        );
         assert_eq!(
             settings.bootstrap_admin.email.as_deref(),
             Some("env-admin@example.com")
@@ -385,6 +461,8 @@ mod tests {
         assert_eq!(settings.session.cookie_name, "oxiderelay_session");
         assert_eq!(settings.session.ttl_hours, 168);
         assert!(!settings.session.cookie_secure);
+        assert!(settings.delivery.public_enabled);
+        assert!(settings.delivery.token.is_none());
         assert!(!settings.bootstrap_admin.is_configured());
         assert_eq!(
             settings.frontend.dist_path,
@@ -398,5 +476,23 @@ mod tests {
         assert!(parse_bool_flag("1").expect("bool"));
         assert!(!parse_bool_flag("false").expect("bool"));
         assert!(parse_bool_flag("maybe").is_err());
+    }
+
+    #[test]
+    fn delivery_environment_settings_are_loaded() {
+        let env = BTreeMap::from([
+            (
+                "OXIDERELAY_PUBLIC_DELIVERY_ENABLED".to_owned(),
+                "false".to_owned(),
+            ),
+            ("OXIDERELAY_DELIVERY_TOKEN".to_owned(), "  ".to_owned()),
+        ]);
+        let settings = Settings::from_sources(cli_defaults(), ConfigFile::default(), |key| {
+            env.get(key).cloned()
+        })
+        .expect("settings");
+
+        assert!(!settings.delivery.public_enabled);
+        assert!(settings.delivery.token.is_none());
     }
 }

@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = initialize_database(&settings).await?;
     let app = http::router(
-        AppState::new(pool, settings.session.clone()),
+        AppState::new(pool, settings.session.clone(), settings.delivery.clone()),
         settings.frontend.dist_path.clone(),
     );
     let address: SocketAddr = settings.server.socket_addr()?;
@@ -37,6 +37,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!(
         bootstrap_admin_configured = settings.bootstrap_admin.is_configured(),
         "bootstrap admin configuration loaded"
+    );
+    info!(
+        public_delivery_enabled = settings.delivery.public_enabled,
+        delivery_token_configured = settings.delivery.token.is_some(),
+        "delivery security configuration loaded"
     );
 
     axum::serve(listener, app).await?;

@@ -1,5 +1,8 @@
 use axum::Json;
-use utoipa::OpenApi;
+use utoipa::{
+    Modify, OpenApi,
+    openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme},
+};
 
 use crate::{
     auth::{AuthResponse, LoginRequest, MePermissionsResponse, MeResponse, ResetPasswordRequest},
@@ -132,6 +135,7 @@ use crate::{
         DeliveryManifestResponse,
         DeliveryManifestNamespace,
     )),
+    modifiers(&DeliverySecurityAddon),
     info(
         title = "OxideRelay API",
         version = "0.0.9",
@@ -139,6 +143,26 @@ use crate::{
     )
 )]
 pub struct ApiDoc;
+
+struct DeliverySecurityAddon;
+
+impl Modify for DeliverySecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "delivery_bearer",
+                SecurityScheme::Http(
+                    HttpBuilder::new()
+                        .scheme(HttpAuthScheme::Bearer)
+                        .description(Some(
+                            "Optional shared delivery token configured with OXIDERELAY_DELIVERY_TOKEN.",
+                        ))
+                        .build(),
+                ),
+            );
+        }
+    }
+}
 
 #[utoipa::path(
     get,

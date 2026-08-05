@@ -36,6 +36,31 @@ local development: cookie_secure=false
 HTTPS production:  cookie_secure=true
 ```
 
+## Delivery Access
+
+Delivery access is controlled independently from admin sessions:
+
+```text
+OXIDERELAY_PUBLIC_DELIVERY_ENABLED=true
+OXIDERELAY_DELIVERY_TOKEN=
+```
+
+The default keeps REST and static delivery public. Set
+`OXIDERELAY_PUBLIC_DELIVERY_ENABLED=false` to return `404` from all delivery
+routes while keeping the admin UI and management API available.
+
+Set `OXIDERELAY_DELIVERY_TOKEN` to a long random secret to require this header:
+
+```http
+Authorization: Bearer <token>
+```
+
+The token protects all projects and environments equally. It is loaded at
+startup, so rotate it by updating the secret, restarting the service, and then
+updating every client. Do not commit the token or put it in URLs. Use HTTPS so
+the header is encrypted in transit. Protected responses use private client
+caching instead of shared public caching.
+
 ## Login Rate Limit
 
 Failed login attempts are persisted in SQLite by a hash of the normalized email

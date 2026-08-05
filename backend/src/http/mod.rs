@@ -9,6 +9,7 @@ use axum::{
     body::Body,
     extract::State,
     http::{Request, StatusCode, header},
+    middleware,
     response::IntoResponse,
     routing::{delete, get, post, put},
 };
@@ -25,6 +26,7 @@ use utoipa::ToSchema;
 use crate::{app::AppState, auth};
 
 pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
+    let delivery_settings = state.delivery.clone();
     let public_delivery_router = Router::new()
         .route(
             "/api/v1/projects/{project_slug}/delivery-metadata",
@@ -42,6 +44,10 @@ pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
             "/static/{project_slug}/{environment_slug}/{language_code}/{*namespace_file}",
             get(delivery::static_namespace_file),
         )
+        .route_layer(middleware::from_fn_with_state(
+            delivery_settings,
+            delivery::require_delivery_access,
+        ))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

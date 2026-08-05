@@ -2,19 +2,24 @@ use std::collections::BTreeMap;
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::{
         HeaderMap, HeaderValue, StatusCode,
-        header::{CACHE_CONTROL, ETAG, IF_NONE_MATCH},
+        header::{
+            AUTHORIZATION, CACHE_CONTROL, ETAG, IF_NONE_MATCH, VARY, WWW_AUTHENTICATE,
+        },
     },
+    middleware::Next,
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::{
     app::AppState,
+    config::DeliverySettings,
     errors::{ApiError, AppResult},
     util::required_non_empty,
 };
@@ -22,14 +27,79 @@ use crate::{
 const SHORT_CACHE_CONTROL: &str = "public, max-age=300, must-revalidate";
 const IMMUTABLE_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 
+pub async fn require_delivery_access(
+    State(settings): State<DeliverySettings>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if !settings.public_enabled {
+        return ApiError::not_found("Delivery endpoints are disabled.").into_response();
+    }
+
+    let protected = settings.token.is_some();
+    if let Some(expected_token) = settings.token.as_deref() {
+        let provided_token = bearer_token(request.headers());
+        if !provided_token.is_some_and(|token| delivery_tokens_match(token, expected_token)) {
+            let mut response =
+                ApiError::unauthorized("A valid delivery Bearer token is required.")
+                    .into_response();
+            response
+                .headers_mut()
+                .insert(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+            return response;
+        }
+    }
+
+    let mut response = next.run(request).await;
+    if protected {
+        let private_cache_control = response
+            .headers()
+            .get(CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.replacen("public", "private", 1));
+        if let Some(value) = private_cache_control
+            .and_then(|value| HeaderValue::from_str(&value).ok())
+        {
+            response.headers_mut().insert(CACHE_CONTROL, value);
+        }
+        response
+            .headers_mut()
+            .append(VARY, HeaderValue::from_static("Authorization"));
+    }
+
+    response
+}
+
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let value = headers.get(AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    (scheme.eq_ignore_ascii_case("Bearer") && !token.is_empty()).then_some(token)
+}
+
+fn delivery_tokens_match(provided: &str, expected: &str) -> bool {
+    let provided_hash = Sha256::digest(provided.as_bytes());
+    let expected_hash = Sha256::digest(expected.as_bytes());
+    provided_hash
+        .iter()
+        .zip(expected_hash.iter())
+        .fold(0_u8, |difference, (left, right)| difference | (left ^ right))
+        == 0
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/projects/{project_slug}/delivery-metadata",
+    description = "Public by default. When OXIDERELAY_DELIVERY_TOKEN is configured, send it as an Authorization Bearer token. The endpoint is unavailable when public delivery is disabled.",
     params(
         ("project_slug" = String, Path, description = "Project slug"),
         MetadataQuery
     ),
-    responses((status = 200, body = DeliveryMetadataResponse))
+    security((), ("delivery_bearer" = [])),
+    responses(
+        (status = 200, body = DeliveryMetadataResponse),
+        (status = 401, body = crate::errors::ErrorResponse),
+        (status = 404, body = crate::errors::ErrorResponse)
+    )
 )]
 pub async fn delivery_metadata(
     State(state): State<AppState>,
@@ -87,12 +157,18 @@ pub async fn delivery_metadata(
 #[utoipa::path(
     get,
     path = "/api/v1/projects/{project_slug}/locales/{language_code}",
+    description = "Public by default. When OXIDERELAY_DELIVERY_TOKEN is configured, send it as an Authorization Bearer token. The endpoint is unavailable when public delivery is disabled.",
     params(
         ("project_slug" = String, Path, description = "Project slug"),
         ("language_code" = String, Path, description = "Language code"),
         DeliveryQuery
     ),
-    responses((status = 200, body = LocaleBundleResponse))
+    security((), ("delivery_bearer" = [])),
+    responses(
+        (status = 200, body = LocaleBundleResponse),
+        (status = 401, body = crate::errors::ErrorResponse),
+        (status = 404, body = crate::errors::ErrorResponse)
+    )
 )]
 pub async fn locale_bundle(
     State(state): State<AppState>,
@@ -124,12 +200,18 @@ pub async fn locale_bundle(
 #[utoipa::path(
     get,
     path = "/api/v1/projects/{project_slug}/delivery-manifest/{language_code}",
+    description = "Public by default. When OXIDERELAY_DELIVERY_TOKEN is configured, send it as an Authorization Bearer token. The endpoint is unavailable when public delivery is disabled.",
     params(
         ("project_slug" = String, Path, description = "Project slug"),
         ("language_code" = String, Path, description = "Language code"),
         DeliveryQuery
     ),
-    responses((status = 200, body = DeliveryManifestResponse))
+    security((), ("delivery_bearer" = [])),
+    responses(
+        (status = 200, body = DeliveryManifestResponse),
+        (status = 401, body = crate::errors::ErrorResponse),
+        (status = 404, body = crate::errors::ErrorResponse)
+    )
 )]
 pub async fn delivery_manifest(
     State(state): State<AppState>,
@@ -188,6 +270,7 @@ pub async fn delivery_manifest(
 #[utoipa::path(
     get,
     path = "/static/{project_slug}/{environment_slug}/{language_code}/{namespace}.json",
+    description = "Public by default. When OXIDERELAY_DELIVERY_TOKEN is configured, send it as an Authorization Bearer token. The endpoint is unavailable when public delivery is disabled.",
     params(
         ("project_slug" = String, Path, description = "Project slug"),
         ("environment_slug" = String, Path, description = "Environment slug"),
@@ -195,7 +278,12 @@ pub async fn delivery_manifest(
         ("namespace" = String, Path, description = "Namespace file name"),
         StaticNamespaceQuery
     ),
-    responses((status = 200, body = Object))
+    security((), ("delivery_bearer" = [])),
+    responses(
+        (status = 200, body = Object),
+        (status = 401, body = crate::errors::ErrorResponse),
+        (status = 404, body = crate::errors::ErrorResponse)
+    )
 )]
 pub async fn static_namespace_file(
     State(state): State<AppState>,

@@ -10,6 +10,10 @@ cookie_name = "oxiderelay_session"
 ttl_hours = "168"
 cookie_secure = "false"
 
+[delivery]
+public_enabled = "true"
+# token = "replace-with-a-long-random-secret"
+
 [bootstrap_admin]
 email = "admin@example.com"
 password = "change-me"

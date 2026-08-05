@@ -57,9 +57,10 @@ Roles are out of scope for MVP.
 
 When a user creates a project, that user becomes the project owner and is implicitly treated as having all project-scoped and environment-scoped permissions within that project.
 
-Translation delivery endpoints are public in MVP.
+Translation delivery endpoints are public by default. Runtime configuration can
+disable them globally or require one deployment-wide shared Bearer token.
 
-API keys are out of scope for MVP.
+Per-client API keys, identity, and token scopes are out of scope for MVP.
 
 ## API
 
@@ -565,7 +566,9 @@ The target environment for a translation read or write must be explicit in the r
 ## Delivery
 
 ```http
+GET /api/v1/projects/{project_slug}/delivery-metadata?environment={environment_slug}
 GET /api/v1/projects/{project_slug}/locales/{language_code}?environment={environment_slug}
+GET /api/v1/projects/{project_slug}/delivery-manifest/{language_code}?environment={environment_slug}
 GET /static/{project_slug}/{environment_slug}/{language_code}/{namespace}.json
 ```
 
@@ -573,7 +576,9 @@ REST delivery returns all namespaces for a locale as a flat object with namespac
 
 Static JSON delivery returns one namespace per file, so response keys are not namespace-prefixed.
 
-Both delivery endpoints are public in MVP and do not require admin session authentication.
+Delivery endpoints do not require admin session authentication. They are public
+by default, but runtime configuration can disable all delivery or require one
+deployment-wide shared Bearer token.
 
 ---
 
@@ -700,7 +705,7 @@ Rules:
 * `environment` is required.
 * The response contains translations from all namespaces.
 * Keys in `values` are namespace-prefixed, for example `common.button.save`.
-* Delivery endpoints are public in MVP.
+* Delivery endpoints are public by default, globally disabled, or protected by a shared Bearer token.
 * Keys are built as `{namespace}.{key}` where `key` is stored without a namespace prefix.
 * Delivery responses expose version tokens that can be used to build immutable URLs.
 
@@ -733,7 +738,7 @@ Response:
 
 Rules:
 
-* The endpoint is public in MVP.
+* The endpoint follows the shared delivery access configuration.
 * The file represents exactly one namespace.
 * Keys in the JSON body are not namespace-prefixed.
 

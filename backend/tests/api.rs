@@ -11,8 +11,8 @@ use http_body_util::BodyExt;
 use oxiderelay_backend::{
     app::AppState,
     config::{
-        BootstrapAdminSettings, DatabaseSettings, FrontendSettings, ServerSettings,
-        SessionSettings, Settings,
+        BootstrapAdminSettings, DatabaseSettings, DeliverySettings, FrontendSettings,
+        ServerSettings, SessionSettings, Settings,
     },
     db, http,
 };
@@ -261,6 +261,24 @@ async fn openapi_document_matches_the_registered_api_surface() {
     }
 
     assert!(document["components"]["schemas"]["HealthResponse"].is_object());
+    assert_eq!(
+        document["components"]["securitySchemes"]["delivery_bearer"]["type"],
+        "http"
+    );
+    assert_eq!(
+        document["components"]["securitySchemes"]["delivery_bearer"]["scheme"],
+        "bearer"
+    );
+    let delivery_security = document["paths"]
+        ["/api/v1/projects/{project_slug}/locales/{language_code}"]["get"]["security"]
+        .as_array()
+        .expect("delivery security requirements");
+    assert!(delivery_security.iter().any(|requirement| requirement == &json!({})));
+    assert!(
+        delivery_security
+            .iter()
+            .any(|requirement| requirement == &json!({ "delivery_bearer": [] }))
+    );
 }
 
 #[tokio::test]
@@ -501,6 +519,115 @@ async fn public_delivery_endpoints_return_expected_payloads() {
             .expect("cache-control"),
         "public, max-age=31536000, immutable"
     );
+}
+
+#[tokio::test]
+async fn disabled_delivery_endpoints_return_not_found_without_breaking_admin_api() {
+    let harness = TestHarness::new_with_delivery(DeliverySettings {
+        public_enabled: false,
+        token: Some("ignored-token".to_owned()),
+    })
+    .await;
+
+    for path in delivery_test_paths() {
+        let response = harness
+            .request(
+                Request::builder()
+                    .method("GET")
+                    .uri(path)
+                    .header(header::AUTHORIZATION, "Bearer ignored-token")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "path: {path}");
+        let body = json_body(response).await;
+        assert_eq!(body["error"]["code"], "NotFound", "path: {path}");
+    }
+
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+    assert!(admin_cookie.starts_with("oxiderelay_session="));
+}
+
+#[tokio::test]
+async fn protected_delivery_endpoints_require_the_configured_bearer_token() {
+    let harness = TestHarness::new_with_delivery(DeliverySettings {
+        public_enabled: true,
+        token: Some("delivery-secret".to_owned()),
+    })
+    .await;
+
+    for path in delivery_test_paths() {
+        for authorization in [None, Some("Bearer wrong-secret")] {
+            let mut request = Request::builder().method("GET").uri(path);
+            if let Some(value) = authorization {
+                request = request.header(header::AUTHORIZATION, value);
+            }
+            let response = harness
+                .request(request.body(Body::empty()).expect("request"))
+                .await;
+
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "path: {path}");
+            assert_eq!(
+                response.headers().get(header::WWW_AUTHENTICATE),
+                Some(&header::HeaderValue::from_static("Bearer"))
+            );
+        }
+
+        let response = harness
+            .request(
+                Request::builder()
+                    .method("GET")
+                    .uri(path)
+                    .header(header::AUTHORIZATION, "Bearer delivery-secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK, "path: {path}");
+        assert_eq!(
+            response.headers().get(header::VARY),
+            Some(&header::HeaderValue::from_static("Authorization")),
+            "path: {path}"
+        );
+        if let Some(cache_control) = response.headers().get(header::CACHE_CONTROL) {
+            assert!(
+                cache_control
+                    .to_str()
+                    .expect("cache-control")
+                    .starts_with("private,"),
+                "path: {path}"
+            );
+        }
+    }
+
+    let preflight = harness
+        .request(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/api/v1/projects/example/locales/en?environment=production")
+                .header(header::ORIGIN, "https://app.example")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "authorization")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert!(preflight.status().is_success());
+    assert_eq!(
+        preflight.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        Some(&header::HeaderValue::from_static("*"))
+    );
+}
+
+fn delivery_test_paths() -> [&'static str; 4] {
+    [
+        "/api/v1/projects/example/delivery-metadata?environment=production",
+        "/api/v1/projects/example/locales/en?environment=production",
+        "/api/v1/projects/example/delivery-manifest/en?environment=production",
+        "/static/example/production/en/common.json",
+    ]
 }
 
 #[tokio::test]
@@ -1570,6 +1697,10 @@ struct TestHarness {
 
 impl TestHarness {
     async fn new() -> Self {
+        Self::new_with_delivery(DeliverySettings::default()).await
+    }
+
+    async fn new_with_delivery(delivery: DeliverySettings) -> Self {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let database_path = temp_dir.path().join("test.sqlite");
         let settings = Settings {
@@ -1585,6 +1716,7 @@ impl TestHarness {
                 ttl_hours: 24 * 7,
                 cookie_secure: false,
             },
+            delivery,
             bootstrap_admin: BootstrapAdminSettings {
                 email: Some("admin@example.com".to_owned()),
                 password: Some("admin-password".to_owned()),
@@ -1598,7 +1730,11 @@ impl TestHarness {
             .await
             .expect("database initialization");
         let app = http::router(
-            AppState::new(pool.clone(), settings.session.clone()),
+            AppState::new(
+                pool.clone(),
+                settings.session.clone(),
+                settings.delivery.clone(),
+            ),
             settings.frontend.dist_path.clone(),
         );
 

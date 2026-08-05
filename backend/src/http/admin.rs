@@ -15,8 +15,6 @@ use crate::{
     util,
 };
 
-const PASSWORD_RESET_TTL_MINUTES: i64 = 15;
-
 // ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------
@@ -172,21 +170,8 @@ pub async fn generate_password_reset_link(
         ));
     }
 
-    let _ = password_resets::purge_expired(&state.pool).await;
-    password_resets::invalidate_active_tokens_for_user(&state.pool, &user.id).await?;
-
-    let raw_token = util::generate_secure_token_hex(32);
-    let token_hash = util::sha256_hex(&raw_token);
-    let expires_at = util::future_utc_minutes(PASSWORD_RESET_TTL_MINUTES)?;
-
-    password_resets::create_reset_token(
-        &state.pool,
-        &user.id,
-        &actor.id,
-        &token_hash,
-        &expires_at,
-    )
-    .await?;
+    let reset_link =
+        password_resets::generate_reset_link(&state.pool, &user.id, &actor.id).await?;
 
     info!(
         actor_user_id = %actor.id,
@@ -195,8 +180,8 @@ pub async fn generate_password_reset_link(
     );
 
     Ok(Json(GeneratePasswordResetLinkResponse {
-        reset_url: format!("/reset-password?token={raw_token}"),
-        expires_at,
+        reset_url: reset_link.reset_url,
+        expires_at: reset_link.expires_at,
     }))
 }
 

@@ -110,6 +110,21 @@ pub async fn find_row_by_id(pool: &SqlitePool, user_id: &str) -> AppResult<UserR
     .ok_or_else(|| ApiError::not_found("User was not found."))
 }
 
+pub async fn find_row_by_email(pool: &SqlitePool, email: &str) -> AppResult<UserRow> {
+    sqlx::query_as::<_, UserRow>(
+        r#"
+        SELECT id, email, password_hash, display_name, is_active
+        FROM users
+        WHERE email = ?1
+        "#,
+    )
+    .bind(email.trim().to_lowercase())
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to load the user."))?
+    .ok_or_else(|| ApiError::not_found("User was not found."))
+}
+
 pub async fn list(pool: &SqlitePool) -> AppResult<Vec<UserRecord>> {
     sqlx::query_as::<_, UserRecord>(
         r#"

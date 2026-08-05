@@ -13,3 +13,11 @@ pub async fn initialize(settings: &Settings) -> Result<SqlitePool, Box<dyn std::
 
     Ok(pool)
 }
+
+pub async fn initialize_existing(
+    settings: &Settings,
+) -> Result<SqlitePool, Box<dyn std::error::Error>> {
+    let pool = pool::connect_existing(&settings.database).await?;
+    sqlx::migrate!("../migrations").run(&pool).await?;
+    Ok(pool)
+}

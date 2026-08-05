@@ -202,6 +202,21 @@ After a successful password reset, all existing sessions for that user are inval
 
 Reset links are intended for operational recovery in self-hosted setups where SMTP is not configured yet.
 
+If no administrator can sign in, generate a link directly against the existing
+SQLite database without starting the HTTP server:
+
+```bash
+cargo run -p oxiderelay-backend -- \
+  --config backend/config.toml.example \
+  password-reset-link --email admin@example.com
+```
+
+The command uses the normal database configuration precedence, requires the
+database file to already exist, and prints a relative `/reset-password` URL
+valid for 15 minutes. Prefix the URL with the deployment origin before opening
+it. Treat the output as a password credential; generating another link for the
+same user invalidates the previous one.
+
 ### Projects
 
 ```text

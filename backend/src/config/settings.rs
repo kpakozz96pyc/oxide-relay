@@ -1,6 +1,6 @@
 use std::{fs, net::SocketAddr, path::PathBuf};
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use serde::Deserialize;
 
 #[derive(Debug, Clone)]
@@ -14,10 +14,12 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
-        let cli = Cli::parse();
+    pub fn load() -> Result<(Self, Option<Command>), Box<dyn std::error::Error>> {
+        let mut cli = Cli::parse();
+        let command = cli.command.take();
         let file_settings = ConfigFile::from_path(cli.config.as_ref())?;
-        Self::from_sources(cli, file_settings, |key| std::env::var(key).ok())
+        let settings = Self::from_sources(cli, file_settings, |key| std::env::var(key).ok())?;
+        Ok((settings, command))
     }
 
     fn from_sources<F>(
@@ -236,10 +238,22 @@ pub struct FrontendSettings {
     pub dist_path: PathBuf,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Generate an offline password reset link for an active user.
+    PasswordResetLink {
+        /// Email address of the user whose password must be reset.
+        #[arg(long)]
+        email: String,
+    },
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "oxiderelay-backend")]
 #[command(about = "OxideRelay backend service")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
     #[arg(long)]
     config: Option<PathBuf>,
     #[arg(long)]
@@ -342,6 +356,7 @@ mod tests {
 
     fn cli_defaults() -> Cli {
         Cli {
+            command: None,
             config: None,
             host: None,
             port: None,
@@ -494,5 +509,27 @@ mod tests {
 
         assert!(!settings.delivery.public_enabled);
         assert!(settings.delivery.token.is_none());
+    }
+
+    #[test]
+    fn password_reset_link_subcommand_accepts_email() {
+        let cli = Cli::try_parse_from([
+            "oxiderelay-backend",
+            "--database-path",
+            "/data/oxiderelay.sqlite",
+            "password-reset-link",
+            "--email",
+            "admin@example.com",
+        ])
+        .expect("cli");
+
+        assert_eq!(
+            cli.database_path,
+            Some(PathBuf::from("/data/oxiderelay.sqlite"))
+        );
+        assert!(matches!(
+            cli.command,
+            Some(Command::PasswordResetLink { email }) if email == "admin@example.com"
+        ));
     }
 }

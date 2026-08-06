@@ -19,6 +19,32 @@ OXIDERELAY_ADMIN_PASSWORD
 
 If at least one user already exists, the service starts without those variables.
 
+## Offline Password Recovery
+
+If no administrator can sign in, the backend binary can generate a one-time
+password reset link without starting the HTTP server. Point it at the same
+existing SQLite database used by the deployment:
+
+```bash
+./target/release/oxiderelay-backend \
+  --config backend/config.toml.example \
+  password-reset-link --email admin@example.com
+```
+
+For the default Compose deployment, run the installed binary in a temporary
+container attached to the same data volume:
+
+```bash
+docker compose run --rm oxiderelay \
+  oxiderelay password-reset-link --email admin@example.com
+```
+
+The command uses the normal `--database-path`, `OXIDERELAY_DATABASE_PATH`, and
+config-file precedence. It refuses to create a missing database, accepts only
+an active user's email, and replaces any previous unused link for that user.
+The printed URL is relative to the deployment origin and expires after 15
+minutes. Do not store the URL in shell history, logs, tickets, or chat.
+
 ## Session Settings
 
 Relevant settings:

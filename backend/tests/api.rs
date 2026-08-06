@@ -1311,6 +1311,7 @@ async fn translation_grid_supports_search_pagination_and_multiple_languages() {
     let namespace_id = harness.insert_namespace(&project_id, "common").await;
     let en_language_id = harness.insert_language(&project_id, "en", "English").await;
     let ru_language_id = harness.insert_language(&project_id, "ru", "Russian").await;
+    let sr_language_id = harness.insert_language(&project_id, "sr", "Serbian").await;
     let environment_id = harness
         .insert_environment(&project_id, "Production", "production")
         .await;
@@ -1324,6 +1325,9 @@ async fn translation_grid_supports_search_pagination_and_multiple_languages() {
     harness
         .insert_translation_value(&first_key_id, &ru_language_id, &environment_id, "Сохранить")
         .await;
+    harness
+        .insert_translation_value(&first_key_id, &sr_language_id, &environment_id, "Sačuvaj")
+        .await;
 
     let second_key_id = harness
         .insert_translation_key(&project_id, &namespace_id, "button.cancel")
@@ -1333,6 +1337,9 @@ async fn translation_grid_supports_search_pagination_and_multiple_languages() {
         .await;
     harness
         .insert_translation_value(&second_key_id, &ru_language_id, &environment_id, "Отмена")
+        .await;
+    harness
+        .insert_translation_value(&second_key_id, &sr_language_id, &environment_id, "Otkaži")
         .await;
 
     let owner_cookie = harness.login("grid-owner@example.com", "owner-password").await;
@@ -1356,6 +1363,36 @@ async fn translation_grid_supports_search_pagination_and_multiple_languages() {
     assert_eq!(body["items"][0]["key"], "button.save");
     assert_eq!(body["items"][0]["values"]["en"]["value"], "Save");
     assert_eq!(body["items"][0]["values"]["ru"]["value"], "Сохранить");
+
+    let missing_key_id = harness
+        .insert_translation_key(&project_id, &namespace_id, "button.publish")
+        .await;
+    harness
+        .insert_translation_value(&missing_key_id, &en_language_id, &environment_id, "Publish")
+        .await;
+    harness
+        .insert_translation_value(&missing_key_id, &ru_language_id, &environment_id, "Опубликовать")
+        .await;
+
+    let response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/grid-project/translations/grid?environment=production&namespace=common&languages=en,ru,sr&base_language=en&missing_languages=ru,sr&page=1&page_size=1")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["page_size"], 1);
+    assert_eq!(body["items"][0]["key"], "button.publish");
+    assert_eq!(body["items"][0]["values"]["en"]["value"], "Publish");
+    assert_eq!(body["items"][0]["values"]["ru"]["value"], "Опубликовать");
+    assert!(body["items"][0]["values"].get("sr").is_none());
 }
 
 #[tokio::test]

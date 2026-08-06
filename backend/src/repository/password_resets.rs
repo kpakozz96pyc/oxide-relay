@@ -3,21 +3,33 @@ use uuid::Uuid;
 
 use crate::{
     errors::{ApiError, AppResult},
-    util::now_utc,
+    util::{self, now_utc},
 };
 
-#[derive(Debug, Clone, FromRow)]
-pub struct PasswordResetTokenRecord {
-    pub id: String,
-    pub user_id: String,
-    pub token_hash: String,
+pub const PASSWORD_RESET_TTL_MINUTES: i64 = 15;
+
+#[derive(Debug)]
+pub struct GeneratedPasswordResetLink {
+    pub reset_url: String,
     pub expires_at: String,
-    pub used_at: Option<String>,
-    pub created_at: String,
-    pub created_by_user_id: String,
 }
 
-pub async fn invalidate_active_tokens_for_user(pool: &SqlitePool, user_id: &str) -> AppResult<()> {
+pub async fn generate_reset_link(
+    pool: &SqlitePool,
+    user_id: &str,
+    created_by_user_id: &str,
+) -> AppResult<GeneratedPasswordResetLink> {
+    let _ = purge_expired(pool).await;
+
+    let raw_token = util::generate_secure_token_hex(32);
+    let token_hash = util::sha256_hex(&raw_token);
+    let expires_at = util::future_utc_minutes(PASSWORD_RESET_TTL_MINUTES)?;
+    let created_at = now_utc()?;
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|error| ApiError::from_sqlx(error, "Unable to create password reset link."))?;
+
     sqlx::query(
         r#"
         DELETE FROM password_reset_tokens
@@ -26,21 +38,9 @@ pub async fn invalidate_active_tokens_for_user(pool: &SqlitePool, user_id: &str)
         "#,
     )
     .bind(user_id)
-    .execute(pool)
+    .execute(&mut *transaction)
     .await
     .map_err(|error| ApiError::from_sqlx(error, "Unable to invalidate password reset links."))?;
-
-    Ok(())
-}
-
-pub async fn create_reset_token(
-    pool: &SqlitePool,
-    user_id: &str,
-    created_by_user_id: &str,
-    token_hash: &str,
-    expires_at: &str,
-) -> AppResult<()> {
-    let created_at = now_utc()?;
 
     sqlx::query(
         r#"
@@ -58,15 +58,34 @@ pub async fn create_reset_token(
     )
     .bind(Uuid::new_v4().to_string())
     .bind(user_id)
-    .bind(token_hash)
-    .bind(expires_at)
+    .bind(&token_hash)
+    .bind(&expires_at)
     .bind(created_at)
     .bind(created_by_user_id)
-    .execute(pool)
+    .execute(&mut *transaction)
     .await
     .map_err(|error| ApiError::from_sqlx(error, "Unable to create password reset link."))?;
 
-    Ok(())
+    transaction
+        .commit()
+        .await
+        .map_err(|error| ApiError::from_sqlx(error, "Unable to create password reset link."))?;
+
+    Ok(GeneratedPasswordResetLink {
+        reset_url: format!("/reset-password?token={raw_token}"),
+        expires_at,
+    })
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct PasswordResetTokenRecord {
+    pub id: String,
+    pub user_id: String,
+    pub token_hash: String,
+    pub expires_at: String,
+    pub used_at: Option<String>,
+    pub created_at: String,
+    pub created_by_user_id: String,
 }
 
 pub async fn find_active_token_by_hash(

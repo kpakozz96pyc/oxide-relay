@@ -1,14 +1,17 @@
 use std::net::SocketAddr;
 
 use oxiderelay_backend::{
-    app::AppState, config::Settings, db::initialize as initialize_database, http,
+    app::AppState,
+    config::{Command, Settings},
+    db::{initialize as initialize_database, initialize_existing},
+    http, recovery,
 };
 use tokio::net::TcpListener;
 use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let settings = Settings::load()?;
+    let (settings, command) = Settings::load()?;
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -18,6 +21,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_target(false)
         .compact()
         .init();
+
+    if let Some(Command::PasswordResetLink { email }) = command {
+        let pool = initialize_existing(&settings).await?;
+        let reset_link = recovery::generate_password_reset_link(&pool, &email).await?;
+
+        println!("Password reset URL: {}", reset_link.reset_url);
+        println!("Expires at: {}", reset_link.expires_at);
+        pool.close().await;
+        return Ok(());
+    }
 
     let pool = initialize_database(&settings).await?;
     let app = http::router(

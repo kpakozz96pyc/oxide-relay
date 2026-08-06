@@ -4,5 +4,6 @@ pub mod config;
 pub mod db;
 pub mod errors;
 pub mod http;
+pub mod recovery;
 pub mod repository;
 pub mod util;

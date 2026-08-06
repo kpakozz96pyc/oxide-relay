@@ -52,6 +52,27 @@ pub async fn list_translation_grid(
         .map(parse_languages_query)
         .transpose()?
         .unwrap_or_default();
+    let base_language = optional_trimmed(query.base_language.as_deref());
+    let missing_language_codes = query
+        .missing_languages
+        .as_deref()
+        .map(parse_languages_query)
+        .transpose()?
+        .unwrap_or_default();
+    if base_language.is_some() != !missing_language_codes.is_empty() {
+        return Err(ApiError::validation(
+            "Base language and missing languages must be provided together.",
+        ));
+    }
+    if let Some(base_language) = base_language
+        && missing_language_codes
+            .iter()
+            .any(|language_code| language_code == base_language)
+    {
+        return Err(ApiError::validation(
+            "Base language cannot also be a missing target language.",
+        ));
+    }
     let page = query.page.unwrap_or(1);
     let page_size = query.page_size.unwrap_or(25);
 
@@ -62,6 +83,8 @@ pub async fn list_translation_grid(
         optional_trimmed(query.namespace.as_deref()),
         optional_trimmed(query.search.as_deref()),
         &language_codes,
+        base_language,
+        &missing_language_codes,
         page,
         page_size,
     )
@@ -407,6 +430,8 @@ pub struct TranslationGridQuery {
     pub environment: String,
     pub namespace: Option<String>,
     pub languages: Option<String>,
+    pub base_language: Option<String>,
+    pub missing_languages: Option<String>,
     pub search: Option<String>,
     pub page: Option<usize>,
     pub page_size: Option<usize>,

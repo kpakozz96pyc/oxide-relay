@@ -298,6 +298,36 @@ th {
   min-width: 0;
 }
 
+.language-menu-button {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.base-language-label {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+.missing-translation-cell {
+  background: var(--color-warning-bg);
+}
+
+.grid-input.is-missing:not(:focus) {
+  border-color: var(--color-warning-border);
+}
+
+.translation-empty-state {
+  padding: var(--space-6);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
 .dropdown-shell {
   position: relative;
 }
@@ -1459,6 +1489,10 @@ th {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .translation-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .users-toolbar-action {
     justify-self: start;
   }
@@ -1497,6 +1531,7 @@ th {
   }
 
   .users-toolbar,
+  .translation-toolbar,
   .environment-matrix-header,
   .environment-matrix-row {
     grid-template-columns: 1fr;

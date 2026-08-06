@@ -410,6 +410,14 @@ describe("App routing", () => {
               created_at: "2026-06-19T00:00:00Z",
               updated_at: "2026-06-19T00:00:00Z",
             },
+            {
+              id: "language-2",
+              project_id: "project-1",
+              code: "ru",
+              name: "Russian",
+              created_at: "2026-06-19T00:00:00Z",
+              updated_at: "2026-06-19T00:00:00Z",
+            },
           ]);
         }
 
@@ -450,6 +458,19 @@ describe("App routing", () => {
           });
         }
 
+        if (
+          path ===
+          "/api/v1/projects/demo-project/translations/grid?environment=production&namespace=common&languages=en%2Cru&search=&page=1&page_size=25&base_language=en&missing_languages=ru"
+        ) {
+          const missingRows = translationRows.filter((row) => !row.values.ru?.id);
+          return jsonResponse({
+            items: missingRows,
+            total: missingRows.length,
+            page: 1,
+            page_size: 25,
+          });
+        }
+
         if (url.pathname === "/api/v1/projects/demo-project/translations" && method === "POST") {
           const body = JSON.parse(String(init?.body)) as {
             key: string;
@@ -460,24 +481,33 @@ describe("App routing", () => {
             value: string;
           };
 
-          translationRows.push({
-            representative_translation_id: "translation-2",
-            translation_key_id: "key-2",
-            key: body.key,
-            description: body.description ?? null,
-            namespace: body.namespace,
-            values: {
-              [body.language]: {
-                id: "translation-2",
-                value: body.value,
+          const existingRow = translationRows.find((row) => row.key === body.key);
+          const translationId = `translation-${translationRows.length + 1}-${body.language}`;
+          if (existingRow) {
+            existingRow.values[body.language] = {
+              id: translationId,
+              value: body.value,
+            };
+          } else {
+            translationRows.push({
+              representative_translation_id: translationId,
+              translation_key_id: `key-${translationRows.length + 1}`,
+              key: body.key,
+              description: body.description ?? null,
+              namespace: body.namespace,
+              values: {
+                [body.language]: {
+                  id: translationId,
+                  value: body.value,
+                },
               },
-            },
-          });
+            });
+          }
 
           return jsonResponse(
             {
-              id: "translation-2",
-              translation_key_id: "key-2",
+              id: translationId,
+              translation_key_id: existingRow?.translation_key_id ?? `key-${translationRows.length}`,
               key: body.key,
               description: body.description ?? null,
               namespace: body.namespace,
@@ -509,6 +539,14 @@ describe("App routing", () => {
     expect(await screen.findByText("cta.publish")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Publish CTA")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Publish")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("View"), "missing");
+    const [missingInput] = await screen.findAllByPlaceholderText("Add value for ru");
+    await user.type(missingInput, "Сохранить{enter}");
+
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue("Сохранить")).not.toBeInTheDocument();
+    });
   });
 
   it("keeps project settings read-only for a member without edit permissions", async () => {

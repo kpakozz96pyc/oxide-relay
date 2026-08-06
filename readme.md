@@ -26,6 +26,7 @@ Starting with `0.1.0`, use forward-only migrations only and do not rewrite migra
 * Multiple language support
 * Namespace support
 * Web UI for translation management
+* Paginated missing-translation view with inline editing
 * REST API for backend applications
 * Static JSON delivery for frontend applications
 * Translation import and export

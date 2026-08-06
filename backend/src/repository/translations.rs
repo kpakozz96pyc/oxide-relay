@@ -143,6 +143,8 @@ pub async fn list_grid(
     namespace_name: Option<&str>,
     search: Option<&str>,
     language_codes: &[String],
+    base_language: Option<&str>,
+    missing_language_codes: &[String],
     page: usize,
     page_size: usize,
 ) -> AppResult<TranslationGridPageRecord> {
@@ -184,7 +186,14 @@ pub async fn list_grid(
     count_query.push_bind(project_id);
     count_query.push(" AND e.slug = ");
     count_query.push_bind(environment_slug);
-    append_grid_filters(&mut count_query, namespace_name, search_pattern.as_deref());
+    append_grid_filters(
+        &mut count_query,
+        environment_slug,
+        namespace_name,
+        search_pattern.as_deref(),
+        base_language,
+        missing_language_codes,
+    );
 
     let total = count_query
         .build_query_scalar::<i64>()
@@ -212,7 +221,14 @@ pub async fn list_grid(
     rows_query.push_bind(project_id);
     rows_query.push(" AND e.slug = ");
     rows_query.push_bind(environment_slug);
-    append_grid_filters(&mut rows_query, namespace_name, search_pattern.as_deref());
+    append_grid_filters(
+        &mut rows_query,
+        environment_slug,
+        namespace_name,
+        search_pattern.as_deref(),
+        base_language,
+        missing_language_codes,
+    );
     rows_query.push(
         r#"
         GROUP BY tk.id, tk.key, tk.description, n.name
@@ -765,8 +781,11 @@ async fn find_or_create_key(
 
 fn append_grid_filters<'a>(
     query: &mut QueryBuilder<'a, Sqlite>,
+    environment_slug: &'a str,
     namespace_name: Option<&'a str>,
     search_pattern: Option<&'a str>,
+    base_language: Option<&'a str>,
+    missing_language_codes: &'a [String],
 ) {
     if let Some(namespace_name) = namespace_name {
         query.push(" AND n.name = ");
@@ -790,5 +809,41 @@ fn append_grid_filters<'a>(
         query.push(" OR COALESCE(tv.value, '') LIKE ");
         query.push_bind(search_pattern);
         query.push(")");
+    }
+
+    if let Some(base_language) = base_language {
+        query.push(
+            r#"
+            AND EXISTS (
+                SELECT 1
+                FROM translation_values base_tv
+                JOIN languages base_l ON base_l.id = base_tv.language_id
+                JOIN environments base_e ON base_e.id = base_tv.environment_id
+                WHERE base_tv.translation_key_id = tk.id
+                  AND base_e.slug =
+            "#,
+        );
+        query.push_bind(environment_slug);
+        query.push(" AND base_l.code = ");
+        query.push_bind(base_language);
+        query.push(") AND EXISTS (SELECT 1 FROM languages target_l WHERE target_l.project_id = tk.project_id AND target_l.code IN (");
+        {
+            let mut separated = query.separated(", ");
+            for language_code in missing_language_codes {
+                separated.push_bind(language_code);
+            }
+        }
+        query.push(
+            r#") AND NOT EXISTS (
+                SELECT 1
+                FROM translation_values target_tv
+                JOIN environments target_e ON target_e.id = target_tv.environment_id
+                WHERE target_tv.translation_key_id = tk.id
+                  AND target_tv.language_id = target_l.id
+                  AND target_e.slug =
+            "#,
+        );
+        query.push_bind(environment_slug);
+        query.push("))");
     }
 }

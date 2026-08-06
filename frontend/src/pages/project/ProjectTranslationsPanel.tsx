@@ -24,6 +24,8 @@ type NewTermDraft = {
   values: Record<string, string>;
 };
 
+type TranslationViewMode = "all" | "missing";
+
 export function ProjectTranslationsPanel({
   project,
   projectSlug,
@@ -44,10 +46,12 @@ export function ProjectTranslationsPanel({
   const [environment, setEnvironment] = useState("");
   const [language, setLanguage] = useState("");
   const [namespace, setNamespace] = useState("");
+  const [viewMode, setViewMode] = useState<TranslationViewMode>("all");
   const [translationSearch, setTranslationSearch] = useState("");
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
   const [selectedLanguageCodes, setSelectedLanguageCodes] = useState<string[]>([]);
+  const [missingTargetLanguageCodes, setMissingTargetLanguageCodes] = useState<string[]>([]);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [focusedCell, setFocusedCell] = useState<string | null>(null);
@@ -55,6 +59,10 @@ export function ProjectTranslationsPanel({
     { id: createDraftId(), key: "", description: "", values: {} },
   ]);
   const deferredTranslationSearch = useDeferredValue(translationSearch.trim());
+  const displayLanguageCodes =
+    viewMode === "missing"
+      ? [language, ...missingTargetLanguageCodes].filter((code, index, codes) => code && codes.indexOf(code) === index)
+      : selectedLanguageCodes;
 
   useEffect(() => {
     if (!environment && environments[0]) {
@@ -75,10 +83,21 @@ export function ProjectTranslationsPanel({
   }, [languages, selectedLanguageCodes.length]);
 
   useEffect(() => {
-    if (language && !selectedLanguageCodes.includes(language)) {
+    if (viewMode === "all" && language && !selectedLanguageCodes.includes(language)) {
       setSelectedLanguageCodes((current) => [...current, language]);
     }
-  }, [language, selectedLanguageCodes]);
+  }, [language, selectedLanguageCodes, viewMode]);
+
+  useEffect(() => {
+    const availableTargets = languages.map((item) => item.code).filter((code) => code !== language);
+    setMissingTargetLanguageCodes((current) => {
+      const next = current.filter((code) => availableTargets.includes(code));
+      if (next.length > 0) {
+        return next.length === current.length && next.every((code, index) => code === current[index]) ? current : next;
+      }
+      return availableTargets[0] ? [availableTargets[0]] : [];
+    });
+  }, [language, languages]);
 
   useEffect(() => {
     if (!namespace && namespaces[0]) {
@@ -88,7 +107,16 @@ export function ProjectTranslationsPanel({
 
   useEffect(() => {
     setPage(1);
-  }, [deferredTranslationSearch, environment, namespace, pageSize, selectedLanguageCodes.join(",")]);
+  }, [
+    deferredTranslationSearch,
+    environment,
+    language,
+    missingTargetLanguageCodes.join(","),
+    namespace,
+    pageSize,
+    selectedLanguageCodes.join(","),
+    viewMode,
+  ]);
 
   const translationsQuery = useQuery({
     queryKey: [
@@ -97,24 +125,39 @@ export function ProjectTranslationsPanel({
       "translations-grid",
       environment,
       namespace,
-      selectedLanguageCodes,
+      displayLanguageCodes,
+      viewMode,
+      language,
+      missingTargetLanguageCodes,
       deferredTranslationSearch,
       page,
       pageSize,
     ],
-    queryFn: () =>
-      apiGet<TranslationGridResponse>(
-        `/api/v1/projects/${projectSlug}/translations/grid?${new URLSearchParams({
+    queryFn: () => {
+      const params = new URLSearchParams({
           environment,
           namespace,
-          languages: selectedLanguageCodes.join(","),
+          languages: displayLanguageCodes.join(","),
           search: deferredTranslationSearch,
           page: String(page),
           page_size: String(pageSize),
-        }).toString()}`,
-      ),
+      });
+      if (viewMode === "missing") {
+        params.set("base_language", language);
+        params.set("missing_languages", missingTargetLanguageCodes.join(","));
+      }
+      return apiGet<TranslationGridResponse>(
+        `/api/v1/projects/${projectSlug}/translations/grid?${params.toString()}`,
+      );
+    },
     enabled:
-      Boolean(projectSlug && environment && namespace && selectedLanguageCodes.length > 0) &&
+      Boolean(
+        projectSlug &&
+          environment &&
+          namespace &&
+          displayLanguageCodes.length > 0 &&
+          (viewMode === "all" || (language && missingTargetLanguageCodes.length > 0)),
+      ) &&
       (project.is_owner || permissionSet.has("ReadTranslations")),
   });
 
@@ -122,13 +165,13 @@ export function ProjectTranslationsPanel({
     const nextDrafts: Record<string, string> = {};
     for (const row of translationsQuery.data?.items ?? []) {
       nextDrafts[`desc:${row.translation_key_id}`] = row.description ?? "";
-      for (const languageCode of selectedLanguageCodes) {
+      for (const languageCode of displayLanguageCodes) {
         nextDrafts[`value:${row.translation_key_id}:${languageCode}`] =
           row.values[languageCode]?.value ?? "";
       }
     }
     setDraftValues(nextDrafts);
-  }, [selectedLanguageCodes, translationsQuery.data]);
+  }, [displayLanguageCodes.join(","), translationsQuery.data]);
 
   const createMutation = useMutation({
     mutationFn: async ({
@@ -271,6 +314,15 @@ export function ProjectTranslationsPanel({
     });
   };
 
+  const toggleMissingTargetLanguage = (languageCode: string) => {
+    setMissingTargetLanguageCodes((current) => {
+      if (current.includes(languageCode)) {
+        return current.length === 1 ? current : current.filter((code) => code !== languageCode);
+      }
+      return [...current, languageCode];
+    });
+  };
+
   const updateNewTermDraft = (draftId: string, field: "key" | "description", value: string) => {
     setNewTermDrafts((current) =>
       current.map((draft) => (draft.id === draftId ? { ...draft, [field]: value } : draft)),
@@ -309,7 +361,7 @@ export function ProjectTranslationsPanel({
     const description = draft.description.trim() || undefined;
     let savedAnyValue = false;
 
-    for (const languageCode of selectedLanguageCodes) {
+    for (const languageCode of displayLanguageCodes) {
       const value = draft.values[languageCode]?.trim();
       if (!value) {
         continue;
@@ -347,7 +399,7 @@ export function ProjectTranslationsPanel({
     for (const draft of pendingDrafts) {
       const description = draft.description.trim() || undefined;
       let savedAnyValue = false;
-      for (const languageCode of selectedLanguageCodes) {
+      for (const languageCode of displayLanguageCodes) {
         const value = draft.values[languageCode]?.trim();
         if (!value) {
           continue;
@@ -384,10 +436,8 @@ export function ProjectTranslationsPanel({
     <article className="panel stack gap-md">
       <header className="panel-header">
         <div className="stack gap-sm">
-          <h2>Translations</h2>
-          <p className="panel-copy">
-            Add and edit translation terms with the existing grid, import, and per-environment permission flow.
-          </p>
+          <h2>{t("project.translations.title")}</h2>
+          <p className="panel-copy">{t("project.translations.description")}</p>
         </div>
         <span className="badge">{totalTranslationRows}</span>
       </header>
@@ -404,16 +454,6 @@ export function ProjectTranslationsPanel({
           </select>
         </label>
         <label className="field small">
-          <span>{t("project.filters.language")}</span>
-          <select value={language} onChange={(event) => setLanguage(event.target.value)}>
-            {languages.map((item) => (
-              <option key={item.id} value={item.code}>
-                {item.code}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field small">
           <span>{t("project.filters.namespace")}</span>
           <select value={namespace} onChange={(event) => setNamespace(event.target.value)}>
             {namespaces.map((item) => (
@@ -421,6 +461,25 @@ export function ProjectTranslationsPanel({
                 {item.name}
               </option>
             ))}
+          </select>
+        </label>
+        <label className="field small">
+          <span>
+            {viewMode === "missing" ? t("project.missing.base_language") : t("project.filters.language")}
+          </span>
+          <select value={language} onChange={(event) => setLanguage(event.target.value)}>
+            {languages.map((item) => (
+              <option key={item.id} value={item.code}>
+                {item.code} · {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field small">
+          <span>{t("project.filters.view")}</span>
+          <select value={viewMode} onChange={(event) => setViewMode(event.target.value as TranslationViewMode)}>
+            <option value="all">{t("project.views.all")}</option>
+            <option value="missing">{t("project.views.missing")}</option>
           </select>
         </label>
       </div>
@@ -439,29 +498,46 @@ export function ProjectTranslationsPanel({
           />
         </label>
         <div className="field language-filter">
-          <span>{t("project.visible_languages.label")}</span>
+          <span>
+            {viewMode === "missing"
+              ? t("project.missing.target_languages")
+              : t("project.visible_languages.label")}
+          </span>
           <div className="dropdown-shell">
             <button
-              className="button ghost"
+              className="button ghost language-menu-button"
               onClick={() => setLanguageMenuOpen((current) => !current)}
               type="button"
             >
-              {selectedLanguageCodes.join(", ") || t("project.visible_languages.placeholder")}
+              {(viewMode === "missing" ? missingTargetLanguageCodes : selectedLanguageCodes).join(", ") ||
+                t("project.visible_languages.placeholder")}
             </button>
             {languageMenuOpen ? (
               <div className="dropdown-panel">
-                {languages.map((item) => (
-                  <label className="dropdown-option" key={item.id}>
-                    <input
-                      checked={selectedLanguageCodes.includes(item.code)}
-                      onChange={() => toggleVisibleLanguage(item.code)}
-                      type="checkbox"
-                    />
-                    <span>
-                      {item.code} · {item.name}
-                    </span>
-                  </label>
-                ))}
+                {languages.map((item) => {
+                  const isBaseLanguage = viewMode === "missing" && item.code === language;
+                  const isChecked =
+                    viewMode === "missing"
+                      ? missingTargetLanguageCodes.includes(item.code)
+                      : selectedLanguageCodes.includes(item.code);
+                  return (
+                    <label className="dropdown-option" key={item.id}>
+                      <input
+                        checked={isChecked}
+                        disabled={isBaseLanguage}
+                        onChange={() =>
+                          viewMode === "missing"
+                            ? toggleMissingTargetLanguage(item.code)
+                            : toggleVisibleLanguage(item.code)
+                        }
+                        type="checkbox"
+                      />
+                      <span>
+                        {item.code} · {item.name}
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
             ) : null}
           </div>
@@ -483,6 +559,9 @@ export function ProjectTranslationsPanel({
       </div>
 
       {!canReadCurrentEnvironment ? <div className="banner error">{t("project.permissions.read_forbidden")}</div> : null}
+      {viewMode === "missing" && missingTargetLanguageCodes.length === 0 ? (
+        <div className="banner warning">{t("project.missing.no_target_languages")}</div>
+      ) : null}
       {translationsQuery.isLoading ? <p className="muted">{t("project.translations.loading")}</p> : null}
       {translationsQuery.isError ? <div className="banner error">{buildErrorMessage(translationsQuery.error)}</div> : null}
 
@@ -499,10 +578,15 @@ export function ProjectTranslationsPanel({
                   <th>{t("project.table.namespace")}</th>
                   <th>{t("project.table.key")}</th>
                   <th>{t("project.table.description")}</th>
-                  {selectedLanguageCodes.map((languageCode) => (
-                    <th key={languageCode}>{languageCode}</th>
+                  {displayLanguageCodes.map((languageCode) => (
+                    <th key={languageCode}>
+                      {languageCode}
+                      {viewMode === "missing" && languageCode === language ? (
+                        <span className="base-language-label">{t("project.missing.base_badge")}</span>
+                      ) : null}
+                    </th>
                   ))}
-                  <th>
+                  {viewMode === "all" ? <th>
                     <div className="table-actions-header">
                       <span>{t("project.table.actions")}</span>
                       {canCreateTranslation ? (
@@ -511,11 +595,11 @@ export function ProjectTranslationsPanel({
                         </button>
                       ) : null}
                     </div>
-                  </th>
+                  </th> : null}
                 </tr>
               </thead>
               <tbody>
-                {canCreateTranslation
+                {canCreateTranslation && viewMode === "all"
                   ? newTermDrafts.map((draft) => (
                       <tr className="new-term-row" key={draft.id}>
                         <td>
@@ -553,7 +637,7 @@ export function ProjectTranslationsPanel({
                             value={draft.description}
                           />
                         </td>
-                        {selectedLanguageCodes.map((languageCode) => (
+                        {displayLanguageCodes.map((languageCode) => (
                           <td key={languageCode}>
                             <input
                               className={
@@ -616,13 +700,18 @@ export function ProjectTranslationsPanel({
                         value={draftValues[`desc:${translation.translation_key_id}`] ?? ""}
                       />
                     </td>
-                    {selectedLanguageCodes.map((languageCode) => {
+                    {displayLanguageCodes.map((languageCode) => {
                       const draftKey = `value:${translation.translation_key_id}:${languageCode}`;
                       const hasValue = Boolean(translation.values[languageCode]?.id);
                       return (
-                        <td key={languageCode}>
+                        <td
+                          className={viewMode === "missing" && !hasValue ? "missing-translation-cell" : undefined}
+                          key={languageCode}
+                        >
                           <input
-                            className={focusedCell === draftKey ? "grid-input is-focused" : "grid-input"}
+                            className={`${focusedCell === draftKey ? "grid-input is-focused" : "grid-input"}${
+                              viewMode === "missing" && !hasValue ? " is-missing" : ""
+                            }`}
                             data-grid-focus="true"
                             onBlur={() => {
                               void commitTranslationValue(translation, languageCode);
@@ -642,7 +731,7 @@ export function ProjectTranslationsPanel({
                         </td>
                       );
                     })}
-                    <td>
+                    {viewMode === "all" ? <td>
                       <div className="action-row">
                         <button
                           className="button ghost danger"
@@ -658,12 +747,17 @@ export function ProjectTranslationsPanel({
                           {`${t("actions.delete")} ${language}`}
                         </button>
                       </div>
-                    </td>
+                    </td> : null}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {translationRows.length === 0 ? (
+            <div className="translation-empty-state">
+              {viewMode === "missing" ? t("project.missing.empty") : t("project.translations.empty")}
+            </div>
+          ) : null}
           <div className="pagination-bar">
             <span className="muted">
               {`${t("project.pagination.page")} ${page} ${t("project.pagination.of")} ${totalPages} · ${totalTranslationRows} ${t("project.pagination.terms")}`}

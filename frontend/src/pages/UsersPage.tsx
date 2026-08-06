@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Permission,
   ProjectCatalogItem,
@@ -32,6 +32,9 @@ export function UsersPage() {
   const [selectedUserId, setSelectedUserId] = useState("");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [pageSuccess, setPageSuccess] = useState<string | null>(null);
+  const filtersActive = Boolean(
+    search.trim() || statusFilter !== "all" || permissionFilter !== "all" || projectFilter !== "all",
+  );
 
   const usersSummaryQuery = useQuery({
     queryKey: [
@@ -52,6 +55,7 @@ export function UsersPage() {
           project: projectFilter === NO_PROJECT_ACCESS_FILTER ? "all" : projectFilter,
         }),
       ),
+    placeholderData: keepPreviousData,
     enabled: canManageUsers || canManagePermissions,
   });
 
@@ -171,11 +175,32 @@ export function UsersPage() {
           </label>
         ) : null}
 
-        {canManageUsers ? (
-          <button className="button primary users-toolbar-action" onClick={() => setIsCreateDialogOpen(true)} type="button">
-            New user
-          </button>
-        ) : null}
+        <div className="users-toolbar-actions">
+          {filtersActive ? (
+            <button
+              className="button ghost"
+              onClick={() => {
+                setSearch("");
+                setStatusFilter("all");
+                setPermissionFilter("all");
+                setProjectFilter("all");
+              }}
+              type="button"
+            >
+              Clear filters
+            </button>
+          ) : null}
+          {canManageUsers ? (
+            <button className="button primary" onClick={() => setIsCreateDialogOpen(true)} type="button">
+              New user
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="users-filter-summary" aria-live="polite">
+        <span>{usersSummaryQuery.isFetching ? "Updating results..." : `${users.length} matching users`}</span>
+        {filtersActive ? <span>Filters are combined using AND.</span> : <span>Showing all users.</span>}
       </div>
 
       {pageSuccess ? <div className="banner success">{pageSuccess}</div> : null}

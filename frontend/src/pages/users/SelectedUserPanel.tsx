@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { Check, Copy, X } from "lucide-react";
 import {
   PasswordResetLinkResponse,
   Permission,
@@ -60,6 +60,7 @@ export function SelectedUserPanel({
   const [securityPassword, setSecurityPassword] = useState("");
   const [securitySuccess, setSecuritySuccess] = useState<string | null>(null);
   const [resetLink, setResetLink] = useState<PasswordResetLinkResponse | null>(null);
+  const [resetLinkCopyState, setResetLinkCopyState] = useState<"idle" | "copied" | "error">("idle");
 
   useEffect(() => {
     if (!selectedUser) {
@@ -72,6 +73,7 @@ export function SelectedUserPanel({
     setSecurityPassword("");
     setSecuritySuccess(null);
     setResetLink(null);
+    setResetLinkCopyState("idle");
     setSelectedProjectSlugToAdd("");
   }, [selectedUser?.id, selectedUser?.email, selectedUser?.display_name, selectedUser?.is_active]);
 
@@ -177,6 +179,7 @@ export function SelectedUserPanel({
     },
     onSuccess: (response) => {
       setResetLink(response);
+      setResetLinkCopyState("idle");
     },
   });
 
@@ -209,16 +212,9 @@ export function SelectedUserPanel({
   const permissionGroups = useMemo(() => buildPermissionGroups(permissionsCatalog), [permissionsCatalog]);
   const selectedPermissionSet = useMemo(() => new Set(permissionsDraft), [permissionsDraft]);
 
-  const accessibleProjects = projectAccess.filter((item) => item.relation !== "none");
   const addableProjects = projectAccess.filter(
     (item) => item.relation === "none" && item.can_manage_access,
   );
-
-  useEffect(() => {
-    if (!selectedProjectSlugToAdd && addableProjects[0]) {
-      setSelectedProjectSlugToAdd(addableProjects[0].project_slug);
-    }
-  }, [addableProjects, selectedProjectSlugToAdd]);
 
   if (!selectedUser) {
     return (
@@ -229,6 +225,34 @@ export function SelectedUserPanel({
   }
 
   const projectCatalogCount = projectCatalog.length;
+  const currentUser = selectedUser;
+
+  async function copyResetLink() {
+    if (!resetLink) {
+      return;
+    }
+
+    try {
+      if (!navigator.clipboard) {
+        throw new Error("Clipboard API is unavailable.");
+      }
+      await navigator.clipboard.writeText(resetLink.reset_url);
+      setResetLinkCopyState("copied");
+    } catch {
+      setResetLinkCopyState("error");
+    }
+  }
+
+  function saveProfile() {
+    const isDeactivating = currentUser.is_active && !profileIsActive;
+    if (
+      isDeactivating &&
+      !window.confirm(`Deactivate user "${currentUser.display_name}"? They will no longer be able to sign in.`)
+    ) {
+      return;
+    }
+    updateProfileMutation.mutate();
+  }
 
   return (
     <article className="panel stack gap-md users-inspector">
@@ -303,7 +327,7 @@ export function SelectedUserPanel({
             <button
               className="button primary"
               disabled={!canManageUsers || !profileDirty || updateProfileMutation.isPending}
-              onClick={() => updateProfileMutation.mutate()}
+              onClick={saveProfile}
               type="button"
             >
               {updateProfileMutation.isPending ? "Saving..." : "Save changes"}
@@ -445,26 +469,32 @@ export function SelectedUserPanel({
           <section className="permission-section-card">
             <header className="panel-header">
               <div className="stack gap-sm">
-                <h3>Current access</h3>
+                <h3>Access by project</h3>
                 <p className="panel-copy">{`Visible projects in catalog: ${projectCatalogCount}`}</p>
               </div>
             </header>
 
-            {accessibleProjects.length === 0 ? <p className="muted">This user does not currently have project access.</p> : null}
+            {projectAccess.length === 0 ? <p className="muted">No projects are available in the catalog.</p> : null}
 
             <div className="project-resource-list">
-              {accessibleProjects.map((item) => (
+              {projectAccess.map((item) => (
                 <div className="resource-item-card" key={item.project_id}>
                   <div className="stack gap-sm">
                     <strong>{item.project_name}</strong>
                     <span className="muted">{item.project_slug}</span>
                     <div className="action-row">
-                      <span className="badge subtle">{item.relation === "owner" ? "Owner" : "Member"}</span>
+                      <span className={`badge relation-badge relation-${item.relation}`}>
+                        {item.relation === "owner" ? "Owner" : item.relation === "member" ? "Member" : "No access"}
+                      </span>
                       {item.access_added_at ? <span className="badge subtle">{item.access_added_at}</span> : null}
                     </div>
                     {item.relation === "owner" ? (
                       <p className="muted">Project owner access cannot be removed here.</p>
-                    ) : null}
+                    ) : item.relation === "member" ? (
+                      <p className="muted">Membership grants access alongside the user's global direct permissions.</p>
+                    ) : (
+                      <p className="muted">No ownership or project membership.</p>
+                    )}
                   </div>
                   {item.relation === "member" ? (
                     <button
@@ -579,8 +609,17 @@ export function SelectedUserPanel({
               <div className="banner info stack gap-sm">
                 <strong>One-time reset link</strong>
                 <span>This link is shown once and stays valid for 15 minutes.</span>
-                <code className="inline-code-block">{resetLink.reset_url}</code>
+                <div className="reset-link-value-row">
+                  <code className="inline-code-block">{resetLink.reset_url}</code>
+                  <button className="button ghost" onClick={copyResetLink} type="button">
+                    {resetLinkCopyState === "copied" ? <Check size={16} /> : <Copy size={16} />}
+                    {resetLinkCopyState === "copied" ? "Copied" : "Copy link"}
+                  </button>
+                </div>
                 <span>{`Expires at: ${resetLink.expires_at}`}</span>
+                {resetLinkCopyState === "error" ? (
+                  <span className="danger-text">Could not copy the link. Select it manually.</span>
+                ) : null}
               </div>
             ) : null}
           </section>
@@ -632,7 +671,6 @@ function AddProjectAccessDialog({
 }) {
   useEffect(() => {
     if (!open) {
-      onChangeProjectSlug("");
       return;
     }
 

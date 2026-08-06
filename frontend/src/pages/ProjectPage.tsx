@@ -15,7 +15,7 @@ import { ProjectTranslationsPanel } from "./project/ProjectTranslationsPanel";
 const PROJECT_TABS = [
   { id: "general", label: "General" },
   { id: "translations", label: "Translations" },
-  { id: "import", label: "Import" },
+  { id: "import", label: "Import / Export" },
   { id: "access", label: "Access" },
   { id: "environments", label: "Environments" },
   { id: "languages", label: "Languages" },

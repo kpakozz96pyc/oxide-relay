@@ -1,10 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ApiError, Environment, Language, Namespace, Project, buildErrorMessage } from "../../api";
+import {
+  ApiError,
+  Environment,
+  Language,
+  Namespace,
+  Project,
+  apiGet,
+  buildErrorMessage,
+} from "../../api";
 import { usePermissionSet } from "../../hooks/usePermissionSet";
 import { editEnvironmentPermission } from "../../lib/permissions";
 
-type ImportStage = "idle" | "parsing" | "uploading" | "processing" | "success";
+type ImportStage = "idle" | "uploading" | "processing" | "success";
 
 type PreparedImportPayload = {
   body: string;
@@ -14,6 +22,11 @@ type PreparedImportPayload = {
 type ImportResponse = {
   imported?: number;
 };
+
+type ImportPreview =
+  | { status: "empty" }
+  | { status: "invalid"; error: string }
+  | { status: "valid"; entryCount: number; values: Record<string, string> };
 
 export function ProjectImportPanel({
   project,
@@ -36,8 +49,8 @@ export function ProjectImportPanel({
   const [importJson, setImportJson] = useState("");
   const [importStage, setImportStage] = useState<ImportStage>("idle");
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [importEntryCount, setImportEntryCount] = useState<number | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [importSuccess, setImportSuccess] = useState<string | null>(null);
+  const [exportSuccess, setExportSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     if (!environment && environments[0]) {
@@ -57,27 +70,29 @@ export function ProjectImportPanel({
     }
   }, [namespace, namespaces]);
 
+  const importPreview = parseImportPreview(importJson);
   const canImportTranslations =
     project.is_owner ||
     (permissionSet.has("ImportTranslations") && permissionSet.has(editEnvironmentPermission(environment)));
+  const canExportTranslations = project.is_owner || permissionSet.has("ExportTranslations");
+  const hasTarget = Boolean(environment && language && namespace);
+  const exportFilename = createExportFilename(projectSlug, environment, language, namespace);
 
   const importMutation = useMutation({
-    mutationFn: async () => {
-      setSuccessMessage(null);
-      setImportStage("parsing");
-      setUploadProgress(8);
-
-      const prepared = await prepareImportPayloadOffThread({
-        environment,
-        language,
-        namespace,
-        rawJson: importJson,
-      });
-
-      setImportEntryCount(prepared.entryCount);
+    mutationFn: async (preview: Extract<ImportPreview, { status: "valid" }>) => {
+      setImportSuccess(null);
       setImportStage("uploading");
       setUploadProgress(12);
 
+      const prepared: PreparedImportPayload = {
+        body: JSON.stringify({
+          environment,
+          language,
+          namespace,
+          values: preview.values,
+        }),
+        entryCount: preview.entryCount,
+      };
       const response = await uploadImportPayload(
         `/api/v1/projects/${projectSlug}/imports/json`,
         prepared,
@@ -89,16 +104,17 @@ export function ProjectImportPanel({
 
       return {
         imported: response.imported ?? prepared.entryCount,
-        entryCount: prepared.entryCount,
       };
     },
     onSuccess: async (result) => {
-      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations-grid"] });
-      await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations-grid"] }),
+        queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations"] }),
+      ]);
       setImportJson("");
       setImportStage("success");
       setUploadProgress(100);
-      setSuccessMessage(`Imported ${result.imported} translations.`);
+      setImportSuccess(`Imported ${result.imported} translations.`);
     },
     onError: () => {
       setImportStage("idle");
@@ -106,125 +122,180 @@ export function ProjectImportPanel({
     },
   });
 
-  const progressLabel = useMemo(() => {
-    switch (importStage) {
-      case "parsing":
-        return "Parsing JSON in a background worker...";
-      case "uploading":
-        return `Uploading payload... ${Math.round(uploadProgress)}%`;
-      case "processing":
-        return "Upload complete. Waiting for the server to finish importing...";
-      case "success":
-        return successMessage ?? "Import completed successfully.";
-      default:
-        return null;
-    }
-  }, [importStage, successMessage, uploadProgress]);
+  const exportMutation = useMutation({
+    mutationFn: async () => {
+      setExportSuccess(null);
+      const query = new URLSearchParams({ environment, language, namespace });
+      const values = await apiGet<Record<string, string>>(
+        `/api/v1/projects/${projectSlug}/exports/json?${query.toString()}`,
+      );
+      downloadJsonFile(exportFilename, values);
+      return Object.keys(values).length;
+    },
+    onSuccess: (exportedCount) => {
+      setExportSuccess(`Downloaded ${exportedCount} translations to ${exportFilename}.`);
+    },
+  });
+
+  const isBusy = importMutation.isPending || exportMutation.isPending;
+  const progressLabel = getImportProgressLabel(importStage, uploadProgress);
+
+  function resetFeedback() {
+    setImportSuccess(null);
+    setExportSuccess(null);
+    importMutation.reset();
+    exportMutation.reset();
+  }
 
   return (
     <article className="panel stack gap-md">
       <header className="panel-header">
         <div className="stack gap-sm">
-          <h2>Import</h2>
+          <h2>Import and export</h2>
           <p className="panel-copy">
-            Import a JSON payload into the selected environment, language, and namespace using the existing project import flow.
+            Choose one translation target, then import a JSON object or download its current values.
           </p>
         </div>
       </header>
 
-      {importMutation.isError ? (
-        <div className="banner error">{buildErrorMessage(importMutation.error)}</div>
-      ) : null}
-      {successMessage ? <div className="banner success">{successMessage}</div> : null}
-
-      {(importStage === "parsing" || importStage === "uploading" || importStage === "processing") && progressLabel ? (
-        <div className="import-progress-card">
-          <div className="import-progress-header">
-            <strong>Import in progress</strong>
-            <span>{Math.round(uploadProgress)}%</span>
-          </div>
-          <div
-            aria-hidden="true"
-            className={`import-progress-bar${importStage === "processing" ? " is-processing" : ""}`}
+      <div className="import-export-target-grid">
+        <label className="field">
+          <span>Environment</span>
+          <select
+            disabled={isBusy}
+            value={environment}
+            onChange={(event) => {
+              setEnvironment(event.target.value);
+              resetFeedback();
+            }}
           >
-            <div className="import-progress-fill" style={{ width: `${uploadProgress}%` }} />
-          </div>
-          <p className="muted">{progressLabel}</p>
-          {importEntryCount !== null ? (
-            <p className="muted">{`Prepared ${importEntryCount} translation entries for import.`}</p>
+            {environments.map((item) => (
+              <option key={item.id} value={item.slug}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Language</span>
+          <select
+            disabled={isBusy}
+            value={language}
+            onChange={(event) => {
+              setLanguage(event.target.value);
+              resetFeedback();
+            }}
+          >
+            {languages.map((item) => (
+              <option key={item.id} value={item.code}>
+                {item.code} - {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Namespace</span>
+          <select
+            disabled={isBusy}
+            value={namespace}
+            onChange={(event) => {
+              setNamespace(event.target.value);
+              resetFeedback();
+            }}
+          >
+            {namespaces.map((item) => (
+              <option key={item.id} value={item.name}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="project-resource-grid import-export-grid">
+        <section className="import-export-card stack gap-md">
+          <header className="stack gap-sm">
+            <h3>Import JSON</h3>
+            <p className="panel-copy">
+              Paste a flat JSON object. Each property name becomes a translation key and each value must be a string.
+            </p>
+          </header>
+
+          {importMutation.isError ? (
+            <div className="banner error" role="alert">
+              {buildErrorMessage(importMutation.error)}
+            </div>
           ) : null}
-        </div>
-      ) : null}
-
-      <div className="project-resource-grid">
-        <section className="stack gap-md">
-          <div className="form-grid">
-            <label className="field">
-              <span>Environment</span>
-              <select
-                disabled={importMutation.isPending}
-                value={environment}
-                onChange={(event) => setEnvironment(event.target.value)}
-              >
-                {environments.map((item) => (
-                  <option key={item.id} value={item.slug}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>Language</span>
-              <select
-                disabled={importMutation.isPending}
-                value={language}
-                onChange={(event) => setLanguage(event.target.value)}
-              >
-                {languages.map((item) => (
-                  <option key={item.id} value={item.code}>
-                    {item.code}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+          {importSuccess ? <div className="banner success">{importSuccess}</div> : null}
 
           <label className="field">
-            <span>Namespace</span>
-            <select
-              disabled={importMutation.isPending}
-              value={namespace}
-              onChange={(event) => setNamespace(event.target.value)}
-            >
-              {namespaces.map((item) => (
-                <option key={item.id} value={item.name}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="field">
-            <span>JSON payload</span>
+            <span>JSON object</span>
             <textarea
-              className="textarea"
-              disabled={importMutation.isPending}
+              aria-describedby="import-json-feedback"
+              aria-invalid={importPreview.status === "invalid"}
+              className="textarea import-json-input"
+              disabled={isBusy}
               onChange={(event) => {
                 setImportJson(event.target.value);
-                setSuccessMessage(null);
-                setImportEntryCount(null);
+                setImportSuccess(null);
+                setImportStage("idle");
+                setUploadProgress(0);
+                importMutation.reset();
               }}
-              placeholder='{"button.save":"Save"}'
+              placeholder={'{\n  "button.save": "Save",\n  "button.cancel": "Cancel"\n}'}
               rows={12}
+              spellCheck={false}
               value={importJson}
             />
           </label>
 
+          <div id="import-json-feedback">
+            {importPreview.status === "valid" ? (
+              <div className="banner info import-preview">
+                <strong>Ready to import</strong>
+                <span>{formatTranslationCount(importPreview.entryCount)} found in this JSON object.</span>
+              </div>
+            ) : null}
+            {importPreview.status === "invalid" ? (
+              <div className="banner error" role="alert">
+                {importPreview.error}
+              </div>
+            ) : null}
+            {importPreview.status === "empty" ? (
+              <p className="field-hint">Paste JSON to preview the number of translation keys before importing.</p>
+            ) : null}
+          </div>
+
+          {importMutation.isPending && progressLabel ? (
+            <div className="import-progress-card" aria-live="polite">
+              <div className="import-progress-header">
+                <strong>Import in progress</strong>
+                <span>{Math.round(uploadProgress)}%</span>
+              </div>
+              <div
+                aria-hidden="true"
+                className={`import-progress-bar${importStage === "processing" ? " is-processing" : ""}`}
+              >
+                <div className="import-progress-fill" style={{ width: `${uploadProgress}%` }} />
+              </div>
+              <p className="muted">{progressLabel}</p>
+            </div>
+          ) : null}
+
           <div className="action-row">
             <button
               className="button primary"
-              disabled={importMutation.isPending || !canImportTranslations || !importJson.trim()}
-              onClick={() => importMutation.mutate()}
+              disabled={
+                isBusy ||
+                !canImportTranslations ||
+                !hasTarget ||
+                importPreview.status !== "valid"
+              }
+              onClick={() => {
+                if (importPreview.status === "valid") {
+                  importMutation.mutate(importPreview);
+                }
+              }}
               type="button"
             >
               {importMutation.isPending ? "Importing..." : "Import JSON"}
@@ -238,105 +309,134 @@ export function ProjectImportPanel({
           ) : null}
         </section>
 
-        <aside className="panel stack gap-md">
-          <header className="panel-header">
-            <div className="stack gap-sm">
-              <h2>Import Notes</h2>
-              <p className="panel-copy">Only real import targets from the current project model are available here.</p>
-            </div>
+        <aside className="import-export-card stack gap-md">
+          <header className="stack gap-sm">
+            <h3>Export JSON</h3>
+            <p className="panel-copy">
+              Download the selected namespace as a flat JSON object that can be imported again later.
+            </p>
           </header>
-          <div className="stack gap-sm">
-            <p className="muted">Large payload parsing runs in a background worker so the page stays responsive.</p>
-            <p className="muted">The progress bar tracks upload progress. Server-side import processing is shown as a separate waiting phase.</p>
-            <p className="muted">The payload must be a flat JSON object of translation keys to string values.</p>
+
+          {exportMutation.isError ? (
+            <div className="banner error" role="alert">
+              {buildErrorMessage(exportMutation.error)}
+            </div>
+          ) : null}
+          {exportSuccess ? <div className="banner success">{exportSuccess}</div> : null}
+
+          <div className="export-file-preview">
+            <span>Download file</span>
+            <code>{exportFilename}</code>
           </div>
+
+          <div className="action-row">
+            <button
+              className="button secondary"
+              disabled={isBusy || !canExportTranslations || !hasTarget}
+              onClick={() => exportMutation.mutate()}
+              type="button"
+            >
+              {exportMutation.isPending ? "Preparing download..." : "Export JSON"}
+            </button>
+          </div>
+
+          {!canExportTranslations ? (
+            <div className="banner info">
+              Export requires owner access or the <code>ExportTranslations</code> permission.
+            </div>
+          ) : null}
         </aside>
       </div>
     </article>
   );
 }
 
-function prepareImportPayloadOffThread({
-  environment,
-  language,
-  namespace,
-  rawJson,
-}: {
-  environment: string;
-  language: string;
-  namespace: string;
-  rawJson: string;
-}): Promise<PreparedImportPayload> {
-  return new Promise((resolve, reject) => {
-    const workerSource = `
-      self.onmessage = (event) => {
-        try {
-          const { environment, language, namespace, rawJson } = event.data;
-          const parsed = JSON.parse(rawJson);
+export function parseImportPreview(rawJson: string): ImportPreview {
+  if (!rawJson.trim()) {
+    return { status: "empty" };
+  }
 
-          if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
-            throw new Error("Import payload must be a flat JSON object.");
-          }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "The JSON could not be parsed.";
+    return {
+      status: "invalid",
+      error: `Invalid JSON. Check quotes, commas, and brackets. ${detail}`,
+    };
+  }
 
-          const entries = Object.entries(parsed);
-          for (const [key, value] of entries) {
-            if (typeof key !== "string" || key.trim().length === 0) {
-              throw new Error("Import keys must be non-empty strings.");
-            }
-            if (typeof value !== "string") {
-              throw new Error("Import values must be strings.");
-            }
-          }
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+    return {
+      status: "invalid",
+      error: 'Import JSON must be an object such as {"button.save":"Save"}.',
+    };
+  }
 
-          const body = JSON.stringify({
-            environment,
-            language,
-            namespace,
-            values: parsed,
-          });
+  const entries = Object.entries(parsed);
+  if (entries.length > 5000) {
+    return {
+      status: "invalid",
+      error: "Import JSON cannot contain more than 5000 translation keys.",
+    };
+  }
 
-          self.postMessage({
-            body,
-            entryCount: entries.length,
-          });
-        } catch (error) {
-          self.postMessage({
-            error: error instanceof Error ? error.message : "Unable to prepare import payload.",
-          });
-        }
+  for (const [key, value] of entries) {
+    if (!key.trim()) {
+      return { status: "invalid", error: "Every translation key must be a non-empty string." };
+    }
+    if (typeof value !== "string") {
+      return {
+        status: "invalid",
+        error: `The value for "${key}" must be a string. Numbers, objects, arrays, and null are not supported.`,
       };
-    `;
+    }
+  }
 
-    const workerUrl = URL.createObjectURL(new Blob([workerSource], { type: "application/javascript" }));
-    const worker = new Worker(workerUrl);
+  return {
+    status: "valid",
+    entryCount: entries.length,
+    values: parsed as Record<string, string>,
+  };
+}
 
-    worker.onmessage = (event: MessageEvent<{ body?: string; entryCount?: number; error?: string }>) => {
-      URL.revokeObjectURL(workerUrl);
-      worker.terminate();
-      if (event.data.error) {
-        reject(new Error(event.data.error));
-        return;
-      }
+export function createExportFilename(
+  projectSlug: string,
+  environment: string,
+  language: string,
+  namespace: string,
+) {
+  return [projectSlug, environment, language, namespace]
+    .map((part) => part.trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, ""))
+    .filter(Boolean)
+    .join("-") + ".json";
+}
 
-      resolve({
-        body: event.data.body ?? "{}",
-        entryCount: event.data.entryCount ?? 0,
-      });
-    };
+function downloadJsonFile(filename: string, values: Record<string, string>) {
+  const blob = new Blob([`${JSON.stringify(values, null, 2)}\n`], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
 
-    worker.onerror = () => {
-      URL.revokeObjectURL(workerUrl);
-      worker.terminate();
-      reject(new Error("Unable to prepare import payload."));
-    };
+function getImportProgressLabel(importStage: ImportStage, uploadProgress: number) {
+  if (importStage === "uploading") {
+    return `Uploading payload... ${Math.round(uploadProgress)}%`;
+  }
+  if (importStage === "processing") {
+    return "Upload complete. Waiting for the server to finish importing...";
+  }
+  return null;
+}
 
-    worker.postMessage({
-      environment,
-      language,
-      namespace,
-      rawJson,
-    });
-  });
+function formatTranslationCount(count: number) {
+  return `${count} translation ${count === 1 ? "key" : "keys"}`;
 }
 
 function uploadImportPayload(
@@ -364,15 +464,14 @@ function uploadImportPayload(
       const responseText = request.responseText?.trim();
       if (request.status < 200 || request.status >= 300) {
         try {
-          const payload = responseText ? (JSON.parse(responseText) as { error?: { message?: string } }) : null;
-          const error = new Error(payload?.error?.message ?? `Request failed with status ${request.status}`) as ApiError;
+          const response = responseText ? (JSON.parse(responseText) as { error?: { message?: string } }) : null;
+          const error = new Error(response?.error?.message ?? `Request failed with status ${request.status}`) as ApiError;
           error.status = request.status;
           reject(error);
-          return;
         } catch {
           reject(new Error(`Request failed with status ${request.status}`));
-          return;
         }
+        return;
       }
 
       onProgress(100);
@@ -381,7 +480,11 @@ function uploadImportPayload(
         return;
       }
 
-      resolve(JSON.parse(responseText) as ImportResponse);
+      try {
+        resolve(JSON.parse(responseText) as ImportResponse);
+      } catch {
+        reject(new Error("The server returned an invalid import response."));
+      }
     };
 
     request.send(payload.body);

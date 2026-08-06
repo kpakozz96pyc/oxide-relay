@@ -111,7 +111,7 @@ export type User = {
 export type UserSummary = User & {
   direct_permissions_count: number;
   project_access_count: number;
-  selected_project_relation: string | null;
+  selected_project_relation: ProjectAccessRelation | null;
 };
 
 export type Permission = {
@@ -132,10 +132,12 @@ export type UserProjectAccess = {
   project_name: string;
   project_slug: string;
   owner_user_id: string;
-  relation: string;
+  relation: ProjectAccessRelation;
   access_added_at: string | null;
   can_manage_access: boolean;
 };
+
+export type ProjectAccessRelation = "owner" | "member" | "none";
 
 export type PasswordResetLinkResponse = {
   reset_url: string;

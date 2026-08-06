@@ -666,15 +666,18 @@ describe("App routing", () => {
     expect(screen.queryByText("Project Members")).not.toBeInTheDocument();
   });
 
-  it("shows generated password reset link in the user security inspector", async () => {
+  it("supports the user management workspace workflows", async () => {
     const user = userEvent.setup();
-
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = new URL(typeof input === "string" ? input : input.toString(), "http://localhost");
-        const method = init?.method ?? "GET";
-        const path = `${url.pathname}${url.search}`;
+    const clipboardWriteText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: clipboardWriteText },
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input.toString(), "http://localhost");
+      const method = init?.method ?? "GET";
+      const path = `${url.pathname}${url.search}`;
 
         if (isLocaleRequest(url.pathname)) {
           return jsonResponse(TEST_LOCALE_MESSAGES);
@@ -704,7 +707,7 @@ describe("App routing", () => {
           });
         }
 
-        if (path === "/api/v1/users/summary") {
+        if (url.pathname === "/api/v1/users/summary") {
           return jsonResponse([
             {
               id: "user-1",
@@ -732,10 +735,21 @@ describe("App routing", () => {
         }
 
         if (path === "/api/v1/permissions") {
-          return jsonResponse([]);
+          return jsonResponse([
+            { id: "permission-1", code: "ManageUsers", description: "Manage users" },
+            { id: "permission-2", code: "CreateProjects", description: "Create projects" },
+            { id: "permission-3", code: "EditAll", description: "Edit non-production environments" },
+          ]);
         }
 
-        if (path === "/api/v1/users/user-1/permissions" || path === "/api/v1/users/user-2/permissions") {
+        if (path === "/api/v1/users/user-1/permissions") {
+          return jsonResponse([
+            { id: "permission-1", code: "ManageUsers", description: "Manage users" },
+            { id: "permission-2", code: "CreateProjects", description: "Create projects" },
+          ]);
+        }
+
+        if (path === "/api/v1/users/user-2/permissions") {
           return jsonResponse([]);
         }
 
@@ -746,6 +760,18 @@ describe("App routing", () => {
               name: "Website",
               slug: "website",
               owner_user_id: "user-1",
+            },
+            {
+              id: "project-2",
+              name: "Mobile",
+              slug: "mobile",
+              owner_user_id: "user-2",
+            },
+            {
+              id: "project-3",
+              name: "Internal tools",
+              slug: "internal-tools",
+              owner_user_id: "user-2",
             },
           ]);
         }
@@ -758,6 +784,24 @@ describe("App routing", () => {
               project_slug: "website",
               owner_user_id: "user-1",
               relation: "owner",
+              access_added_at: null,
+              can_manage_access: true,
+            },
+            {
+              project_id: "project-2",
+              project_name: "Mobile",
+              project_slug: "mobile",
+              owner_user_id: "user-2",
+              relation: "member",
+              access_added_at: "2026-06-20T00:00:00Z",
+              can_manage_access: true,
+            },
+            {
+              project_id: "project-3",
+              project_name: "Internal tools",
+              project_slug: "internal-tools",
+              owner_user_id: "user-2",
+              relation: "none",
               access_added_at: null,
               can_manage_access: true,
             },
@@ -785,24 +829,83 @@ describe("App routing", () => {
           });
         }
 
+        if (path === "/api/v1/users/user-1" && method === "PUT") {
+          return jsonResponse({
+            id: "user-1",
+            email: "admin@example.com",
+            display_name: "Administrator",
+            is_active: false,
+            created_at: "2026-06-19T00:00:00Z",
+            updated_at: "2026-06-30T12:35:00Z",
+          });
+        }
+
         throw new Error(`Unexpected request: ${method} ${path}`);
-      }),
-    );
+      });
+    vi.stubGlobal("fetch", fetchMock);
 
     renderApp(["/users"]);
 
     expect(await screen.findByRole("heading", { name: "Users and permissions" })).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox", { name: "Search users" }), "member");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Project" }), "website");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Status" }), "inactive");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Permission" }), "ManageUsers");
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).includes(
+            "/api/v1/users/summary?search=member&status=inactive&permission=ManageUsers&project=website",
+          ),
+        ),
+      ).toBe(true);
+    });
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByRole("textbox", { name: "Search users" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue("all");
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveValue("all");
+    expect(screen.getByRole("combobox", { name: "Permission" })).toHaveValue("all");
+
+    await user.click(screen.getByRole("button", { name: "Project access" }));
+    expect(await screen.findByText("Owner", { selector: ".relation-badge" })).toBeInTheDocument();
+    expect(screen.getByText("Member", { selector: ".relation-badge" })).toBeInTheDocument();
+    expect(screen.getByText("No access", { selector: ".relation-badge" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Permissions" }));
+    expect(await screen.findByRole("heading", { name: "User management" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Projects" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Environments" })).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: "Security" }));
     await user.click(screen.getByRole("button", { name: "Generate reset link" }));
 
     expect(await screen.findByText("One-time reset link")).toBeInTheDocument();
     expect(screen.getByText("/reset-password?token=one-time-token")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Copy link" }));
+    expect(clipboardWriteText).toHaveBeenCalledWith("/reset-password?token=one-time-token");
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Profile" }));
+    await user.click(screen.getByRole("checkbox", { name: "User is active" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'Deactivate user "Administrator"? They will no longer be able to sign in.',
+    );
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+
+    confirmSpy.mockReturnValue(true);
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(true);
+    });
 
     await user.click(screen.getByText("Member"));
 
     await waitFor(() => {
       expect(screen.queryByText("/reset-password?token=one-time-token")).not.toBeInTheDocument();
     });
+    Reflect.deleteProperty(navigator, "clipboard");
   });
 
   it("submits a reset password token from the public page", async () => {

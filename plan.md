@@ -74,7 +74,7 @@
 - Support direct permission checks using seeded permission codes.
 - Support project access checks through `user_project_access`.
 - Support implicit project owner privileges inside owned projects.
-- Support environment-specific permission checks such as `ReadProduction` and `EditStaging`.
+- Support environment-specific permission checks such as `EditAll` and `EditProd`.
 - Enforce authorization order defined in `architecture.md`.
 
 ### Task 3.4: Implement reusable authorization guards

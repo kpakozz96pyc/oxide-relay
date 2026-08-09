@@ -123,14 +123,13 @@ DeleteTranslations
 ImportTranslations
 ExportTranslations
 
-ReadDevelopment
-ReadStaging
-ReadProduction
-
-EditDevelopment
-EditStaging
-EditProduction
+EditAll
+EditProd
 ```
+
+`ReadTranslations` grants read access to translations across every environment; there is no
+per-environment read permission. Writes are split by environment: `EditAll` covers every
+environment except `production`, and `EditProd` is required for `production` specifically.
 
 The permission catalog is seeded and immutable in MVP.
 
@@ -488,14 +487,8 @@ DeleteTranslations
 ImportTranslations
 ExportTranslations
 
-ReadDevelopment
-ReadStaging
-ReadProduction
-
-EditDevelopment
-EditStaging
-EditProduction
-
+EditAll
+EditProd
 ```
 
 ---

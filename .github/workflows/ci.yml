@@ -10,6 +10,26 @@ permissions:
   contents: read
 
 jobs:
+  version_consistency:
+    name: Version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compare Cargo.toml and frontend/package.json versions
+        run: |
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          package_version=$(python3 -c "import json; print(json.load(open('frontend/package.json'))['version'])")
+
+          echo "Cargo.toml version: ${cargo_version}"
+          echo "frontend/package.json version: ${package_version}"
+
+          if [ "${cargo_version}" != "${package_version}" ]; then
+            echo "::error::Version mismatch: Cargo.toml=${cargo_version} frontend/package.json=${package_version}"
+            exit 1
+          fi
+
   backend:
     name: Backend cargo test
     runs-on: ubuntu-latest

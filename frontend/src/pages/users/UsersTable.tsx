@@ -4,11 +4,15 @@ export function UsersTable({
   users,
   projectFilter,
   selectedUserId,
+  filtersActive,
+  onClearFilters,
   onSelect,
 }: {
   users: UserSummary[];
   projectFilter: string | null;
   selectedUserId: string;
+  filtersActive: boolean;
+  onClearFilters: () => void;
   onSelect: (userId: string) => void;
 }) {
   if (users.length === 0) {
@@ -16,6 +20,11 @@ export function UsersTable({
       <div className="users-empty-state">
         <strong>No users match the current filters.</strong>
         <p className="muted">Try clearing search or adjusting the active filters.</p>
+        {filtersActive ? (
+          <button className="button ghost" onClick={onClearFilters} type="button">
+            Clear filters
+          </button>
+        ) : null}
       </div>
     );
   }

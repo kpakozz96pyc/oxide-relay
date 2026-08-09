@@ -321,10 +321,23 @@ th {
 }
 
 .translation-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
   padding: var(--space-6);
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
+  text-align: center;
+}
+
+.resource-list-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
   text-align: center;
 }
 

@@ -35,6 +35,12 @@ export function UsersPage() {
   const filtersActive = Boolean(
     search.trim() || statusFilter !== "all" || permissionFilter !== "all" || projectFilter !== "all",
   );
+  const clearFilters = () => {
+    setSearch("");
+    setStatusFilter("all");
+    setPermissionFilter("all");
+    setProjectFilter("all");
+  };
 
   const usersSummaryQuery = useQuery({
     queryKey: [
@@ -177,16 +183,7 @@ export function UsersPage() {
 
         <div className="users-toolbar-actions">
           {filtersActive ? (
-            <button
-              className="button ghost"
-              onClick={() => {
-                setSearch("");
-                setStatusFilter("all");
-                setPermissionFilter("all");
-                setProjectFilter("all");
-              }}
-              type="button"
-            >
+            <button className="button ghost" onClick={clearFilters} type="button">
               Clear filters
             </button>
           ) : null}
@@ -220,9 +217,11 @@ export function UsersPage() {
           </header>
 
           <UsersTable
+            filtersActive={filtersActive}
             projectFilter={canManageUsers ? projectFilter : null}
             selectedUserId={selectedUserId}
             users={users}
+            onClearFilters={clearFilters}
             onSelect={setSelectedUserId}
           />
         </article>

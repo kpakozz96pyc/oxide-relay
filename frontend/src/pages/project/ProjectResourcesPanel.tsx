@@ -98,6 +98,13 @@ function LanguagesPanel({
         </header>
         {languagesQuery.isLoading ? <p className="muted">Loading languages...</p> : null}
         <ResourceList
+          emptyAction={
+            canEditProject ? (
+              <button className="button primary" onClick={() => setIsCreateDialogOpen(true)} type="button">
+                New language
+              </button>
+            ) : null
+          }
           items={(languagesQuery.data ?? []).map((item) => ({
             id: item.id,
             title: item.code,
@@ -209,6 +216,13 @@ function NamespacesPanel({
         </header>
         {namespacesQuery.isLoading ? <p className="muted">Loading namespaces...</p> : null}
         <ResourceList
+          emptyAction={
+            canEditProject ? (
+              <button className="button primary" onClick={() => setIsCreateDialogOpen(true)} type="button">
+                New namespace
+              </button>
+            ) : null
+          }
           items={(namespacesQuery.data ?? []).map((item) => ({
             id: item.id,
             title: item.name,
@@ -665,6 +679,7 @@ function MutationErrors({
 
 function ResourceList({
   items,
+  emptyAction,
 }: {
   items: Array<{
     id: string;
@@ -673,9 +688,15 @@ function ResourceList({
     secondary: string;
     action: ReactNode;
   }>;
+  emptyAction?: ReactNode;
 }) {
   if (items.length === 0) {
-    return <p className="muted">Nothing to show yet.</p>;
+    return (
+      <div className="resource-list-empty-state">
+        <p className="muted">Nothing to show yet.</p>
+        {emptyAction}
+      </div>
+    );
   }
 
   return (

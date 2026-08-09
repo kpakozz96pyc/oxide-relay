@@ -600,7 +600,7 @@ export function ProjectTranslationsPanel({
               </thead>
               <tbody>
                 {canCreateTranslation && viewMode === "all"
-                  ? newTermDrafts.map((draft) => (
+                  ? newTermDrafts.map((draft, draftIndex) => (
                       <tr className="new-term-row" key={draft.id}>
                         <td>
                           <span className="badge subtle">{namespace}</span>
@@ -609,6 +609,7 @@ export function ProjectTranslationsPanel({
                           <input
                             className={focusedCell === `new-key:${draft.id}` ? "grid-input is-focused" : "grid-input"}
                             data-grid-focus="true"
+                            data-new-term-key={draftIndex === 0 ? "true" : undefined}
                             onChange={(event) => updateNewTermDraft(draft.id, "key", event.target.value)}
                             onFocus={() => setFocusedCell(`new-key:${draft.id}`)}
                             onKeyDown={(event) => {
@@ -755,7 +756,21 @@ export function ProjectTranslationsPanel({
           </div>
           {translationRows.length === 0 ? (
             <div className="translation-empty-state">
-              {viewMode === "missing" ? t("project.missing.empty") : t("project.translations.empty")}
+              <span>{viewMode === "missing" ? t("project.missing.empty") : t("project.translations.empty")}</span>
+              {viewMode === "all" && canCreateTranslation ? (
+                <button
+                  className="button primary"
+                  onClick={() => {
+                    const input = translationGridRef.current?.querySelector<HTMLInputElement>(
+                      '[data-new-term-key="true"]',
+                    );
+                    input?.focus();
+                  }}
+                  type="button"
+                >
+                  {t("project.translations.empty_action")}
+                </button>
+              ) : null}
             </div>
           ) : null}
           <div className="pagination-bar">

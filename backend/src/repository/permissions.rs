@@ -79,6 +79,30 @@ pub async fn user_has_permission(
     Ok(count > 0)
 }
 
+/// Count active users other than `excluded_user_id` who hold `permission_code`.
+pub async fn count_other_active_users_with_permission(
+    pool: &SqlitePool,
+    excluded_user_id: &str,
+    permission_code: &str,
+) -> AppResult<i64> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM users u
+        JOIN user_permissions up ON up.user_id = u.id
+        JOIN permissions p ON p.id = up.permission_id
+        WHERE u.is_active = 1
+          AND p.code = ?1
+          AND u.id != ?2
+        "#,
+    )
+    .bind(permission_code)
+    .bind(excluded_user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to count active administrators."))
+}
+
 /// Replace all permissions for `user_id` with the given codes.
 /// Returns an error if any code is not in the seeded catalog.
 pub async fn replace_for_user(

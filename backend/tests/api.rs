@@ -422,7 +422,7 @@ async fn public_delivery_endpoints_return_expected_payloads() {
             Request::builder()
                 .method("GET")
                 .uri("/api/v1/projects/delivery-project/locales/ru?environment=production")
-                .header(header::IF_NONE_MATCH, locale_etag)
+                .header(header::IF_NONE_MATCH, locale_etag.clone())
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -518,6 +518,79 @@ async fn public_delivery_endpoints_return_expected_payloads() {
             .get(header::CACHE_CONTROL)
             .expect("cache-control"),
         "public, max-age=31536000, immutable"
+    );
+
+    let owner_cookie = harness
+        .login("delivery-owner@example.com", "delivery-password")
+        .await;
+    let create_translation = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/delivery-project/translations")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "environment": "production",
+                        "language": "ru",
+                        "namespace": "common",
+                        "key": "button.cancel",
+                        "value": "Отмена"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(create_translation.status(), StatusCode::CREATED);
+
+    let locale_response_after_change = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/delivery-project/locales/ru?environment=production")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(locale_response_after_change.status(), StatusCode::OK);
+    let etag_after_change = locale_response_after_change
+        .headers()
+        .get(header::ETAG)
+        .expect("etag")
+        .to_str()
+        .expect("etag header")
+        .to_owned();
+    assert_ne!(
+        etag_after_change, locale_etag,
+        "ETag must change after a translation is added"
+    );
+
+    let locale_body_after_change = json_body(locale_response_after_change).await;
+    assert_ne!(
+        locale_body_after_change["version"], locale_body["version"],
+        "version must change after a translation is added"
+    );
+    assert_eq!(
+        locale_body_after_change["values"]["common.button.cancel"],
+        "Отмена"
+    );
+
+    let stale_if_none_match = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/delivery-project/locales/ru?environment=production")
+                .header(header::IF_NONE_MATCH, locale_etag)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(
+        stale_if_none_match.status(),
+        StatusCode::OK,
+        "a stale ETag must no longer match after the underlying data changed"
     );
 }
 
@@ -1425,6 +1498,155 @@ async fn creating_project_bootstraps_default_language_namespace_and_environments
 }
 
 #[tokio::test]
+async fn project_creation_is_transactional_and_leaves_no_partial_state_on_failure() {
+    let harness = TestHarness::new().await;
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+
+    let create_project = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "name": "Atomic Project",
+                        "slug": "atomic-project",
+                        "description": "Project used to verify transactional creation"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(create_project.status(), StatusCode::CREATED);
+
+    let projects_before = table_row_count(&harness.pool, "projects").await;
+    let environments_before = table_row_count(&harness.pool, "environments").await;
+    let namespaces_before = table_row_count(&harness.pool, "namespaces").await;
+    let languages_before = table_row_count(&harness.pool, "languages").await;
+    let access_before = table_row_count(&harness.pool, "user_project_access").await;
+
+    let create_duplicate = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "name": "Duplicate Slug Project",
+                        "slug": "atomic-project",
+                        "description": "Second attempt with a colliding slug"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(create_duplicate.status(), StatusCode::CONFLICT);
+    let create_duplicate_body = json_body(create_duplicate).await;
+    assert_eq!(create_duplicate_body["error"]["code"], "Conflict");
+
+    assert_eq!(table_row_count(&harness.pool, "projects").await, projects_before);
+    assert_eq!(
+        table_row_count(&harness.pool, "environments").await,
+        environments_before
+    );
+    assert_eq!(table_row_count(&harness.pool, "namespaces").await, namespaces_before);
+    assert_eq!(table_row_count(&harness.pool, "languages").await, languages_before);
+    assert_eq!(
+        table_row_count(&harness.pool, "user_project_access").await,
+        access_before
+    );
+}
+
+#[tokio::test]
+async fn deleting_a_project_cascades_to_dependent_rows() {
+    let harness = TestHarness::new().await;
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+
+    let create_project = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "name": "Cascade Project",
+                        "slug": "cascade-project",
+                        "description": "Project used to verify FK cascade deletes"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(create_project.status(), StatusCode::CREATED);
+    let project_id = json_body(create_project).await["id"]
+        .as_str()
+        .expect("project id")
+        .to_owned();
+
+    let create_translation = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/cascade-project/translations")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "environment": "production",
+                        "language": "en",
+                        "namespace": "common",
+                        "key": "cascade.key",
+                        "value": "Cascade value"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(create_translation.status(), StatusCode::CREATED);
+
+    assert!(scoped_row_count(&harness.pool, "namespaces", &project_id).await > 0);
+    assert!(scoped_row_count(&harness.pool, "languages", &project_id).await > 0);
+    assert!(scoped_row_count(&harness.pool, "environments", &project_id).await > 0);
+    assert!(scoped_row_count(&harness.pool, "translation_keys", &project_id).await > 0);
+    assert!(scoped_row_count(&harness.pool, "user_project_access", &project_id).await > 0);
+    assert!(translation_value_count(&harness.pool, &project_id).await > 0);
+
+    let delete_project = harness
+        .request(
+            Request::builder()
+                .method("DELETE")
+                .uri("/api/v1/projects/cascade-project")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(delete_project.status(), StatusCode::NO_CONTENT);
+
+    assert_eq!(table_row_count_where_id(&harness.pool, "projects", &project_id).await, 0);
+    assert_eq!(scoped_row_count(&harness.pool, "namespaces", &project_id).await, 0);
+    assert_eq!(scoped_row_count(&harness.pool, "languages", &project_id).await, 0);
+    assert_eq!(scoped_row_count(&harness.pool, "environments", &project_id).await, 0);
+    assert_eq!(scoped_row_count(&harness.pool, "translation_keys", &project_id).await, 0);
+    assert_eq!(
+        scoped_row_count(&harness.pool, "user_project_access", &project_id).await,
+        0
+    );
+    assert_eq!(translation_value_count(&harness.pool, &project_id).await, 0);
+}
+
+#[tokio::test]
 async fn translation_grid_supports_search_pagination_and_multiple_languages() {
     let harness = TestHarness::new().await;
     let owner_id = harness
@@ -2168,6 +2390,44 @@ async fn json_body(response: axum::response::Response) -> Value {
         .expect("body")
         .to_bytes();
     serde_json::from_slice(&bytes).expect("json")
+}
+
+async fn table_row_count(pool: &SqlitePool, table: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table}"))
+        .fetch_one(pool)
+        .await
+        .expect("row count")
+}
+
+async fn table_row_count_where_id(pool: &SqlitePool, table: &str, id: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table} WHERE id = ?1"))
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .expect("row count")
+}
+
+async fn scoped_row_count(pool: &SqlitePool, table: &str, project_id: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table} WHERE project_id = ?1"))
+        .bind(project_id)
+        .fetch_one(pool)
+        .await
+        .expect("row count")
+}
+
+async fn translation_value_count(pool: &SqlitePool, project_id: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM translation_values tv
+        JOIN translation_keys tk ON tk.id = tv.translation_key_id
+        WHERE tk.project_id = ?1
+        "#,
+    )
+    .bind(project_id)
+    .fetch_one(pool)
+    .await
+    .expect("row count")
 }
 
 fn hash_password(password: &str) -> String {

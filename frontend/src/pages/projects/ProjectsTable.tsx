@@ -1,14 +1,31 @@
 import { useNavigate } from "react-router-dom";
 import { Project } from "../../api";
 
-export function ProjectsTable({ projects }: { projects: Project[] }) {
+export function ProjectsTable({
+  projects,
+  canCreateProjects,
+  onCreateProject,
+}: {
+  projects: Project[];
+  canCreateProjects: boolean;
+  onCreateProject: () => void;
+}) {
   const navigate = useNavigate();
 
   if (projects.length === 0) {
     return (
       <div className="projects-empty-state">
         <strong>No projects are available.</strong>
-        <p className="muted">Create a project or ask its owner to grant you project access.</p>
+        <p className="muted">
+          {canCreateProjects
+            ? "Create a project to get started."
+            : "Ask a project owner to grant you project access."}
+        </p>
+        {canCreateProjects ? (
+          <button className="button primary" onClick={onCreateProject} type="button">
+            New project
+          </button>
+        ) : null}
       </div>
     );
   }

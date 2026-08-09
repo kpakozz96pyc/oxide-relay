@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -114,6 +114,8 @@ describe("App routing", () => {
   });
 
   it("renders the projects workspace for an authenticated user", async () => {
+    const user = userEvent.setup();
+
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -160,6 +162,14 @@ describe("App routing", () => {
     await waitFor(() => {
       expect(screen.getByText("0 projects.visible_suffix")).toBeInTheDocument();
     });
+
+    expect(screen.getByText("No projects are available.")).toBeInTheDocument();
+    const emptyStateCreateButton = within(screen.getByText("No projects are available.").parentElement as HTMLElement).getByRole(
+      "button",
+      { name: "New project" },
+    );
+    await user.click(emptyStateCreateButton);
+    expect(await screen.findByRole("heading", { name: "New project" })).toBeInTheDocument();
   });
 
   it("renders project settings tabs and updates project settings", async () => {
@@ -549,6 +559,196 @@ describe("App routing", () => {
     });
   });
 
+  it("shows next-action CTAs for empty resource and translation states", async () => {
+    const user = userEvent.setup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(typeof input === "string" ? input : input.toString(), "http://localhost");
+        const method = init?.method ?? "GET";
+        const path = `${url.pathname}${url.search}`;
+
+        if (isLocaleRequest(url.pathname)) {
+          return jsonResponse(TEST_LOCALE_MESSAGES);
+        }
+
+        if (isMetadataRequest(url.pathname)) {
+          return jsonResponse({
+            version: "v1",
+            languages: [{ code: "en", name: "English" }],
+            namespaces: [{ name: "common" }],
+          });
+        }
+
+        if (path === "/api/v1/me") {
+          return jsonResponse({
+            user: { id: "user-1", email: "admin@example.com", display_name: "Administrator" },
+          });
+        }
+
+        if (path === "/api/v1/me/permissions") {
+          return jsonResponse({ permissions: [] });
+        }
+
+        if (path === "/api/v1/projects/demo-project") {
+          return jsonResponse({
+            id: "project-1",
+            name: "Demo Project",
+            slug: "demo-project",
+            description: "Project for UI tests",
+            owner_user_id: "user-1",
+            created_at: "2026-06-19T00:00:00Z",
+            updated_at: "2026-06-19T00:00:00Z",
+            is_owner: true,
+          });
+        }
+
+        if (path === "/api/v1/projects/demo-project/languages") {
+          return jsonResponse([]);
+        }
+
+        if (path === "/api/v1/projects/demo-project/namespaces") {
+          return jsonResponse([]);
+        }
+
+        if (path === "/api/v1/projects/demo-project/environments") {
+          return jsonResponse([
+            {
+              id: "environment-1",
+              project_id: "project-1",
+              name: "Production",
+              slug: "production",
+              created_at: "2026-06-19T00:00:00Z",
+              updated_at: "2026-06-19T00:00:00Z",
+            },
+          ]);
+        }
+
+        throw new Error(`Unexpected request: ${method} ${path}`);
+      }),
+    );
+
+    renderApp(["/projects/demo-project"]);
+
+    await user.click(await screen.findByRole("button", { name: "Languages" }));
+    expect(await screen.findByText("Nothing to show yet.")).toBeInTheDocument();
+    const newLanguageButtons = screen.getAllByRole("button", { name: "New language" });
+    await user.click(newLanguageButtons[newLanguageButtons.length - 1]);
+    expect(await screen.findByRole("heading", { name: "New language" })).toBeInTheDocument();
+    await user.click(screen.getByLabelText("Close create language dialog"));
+
+    await user.click(screen.getByRole("button", { name: "Namespaces" }));
+    expect(await screen.findByText("Nothing to show yet.")).toBeInTheDocument();
+    const newNamespaceButtons = screen.getAllByRole("button", { name: "New namespace" });
+    await user.click(newNamespaceButtons[newNamespaceButtons.length - 1]);
+    expect(await screen.findByRole("heading", { name: "New namespace" })).toBeInTheDocument();
+  });
+
+  it("focuses the new key input from the empty translations state action", async () => {
+    const user = userEvent.setup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(typeof input === "string" ? input : input.toString(), "http://localhost");
+        const method = init?.method ?? "GET";
+        const path = `${url.pathname}${url.search}`;
+
+        if (isLocaleRequest(url.pathname)) {
+          return jsonResponse(TEST_LOCALE_MESSAGES);
+        }
+
+        if (isMetadataRequest(url.pathname)) {
+          return jsonResponse({
+            version: "v1",
+            languages: [{ code: "en", name: "English" }],
+            namespaces: [{ name: "common" }],
+          });
+        }
+
+        if (path === "/api/v1/me") {
+          return jsonResponse({
+            user: { id: "user-1", email: "admin@example.com", display_name: "Administrator" },
+          });
+        }
+
+        if (path === "/api/v1/me/permissions") {
+          return jsonResponse({ permissions: [] });
+        }
+
+        if (path === "/api/v1/projects/demo-project") {
+          return jsonResponse({
+            id: "project-1",
+            name: "Demo Project",
+            slug: "demo-project",
+            description: "Project for UI tests",
+            owner_user_id: "user-1",
+            created_at: "2026-06-19T00:00:00Z",
+            updated_at: "2026-06-19T00:00:00Z",
+            is_owner: true,
+          });
+        }
+
+        if (path === "/api/v1/projects/demo-project/languages") {
+          return jsonResponse([
+            {
+              id: "language-1",
+              project_id: "project-1",
+              code: "en",
+              name: "English",
+              created_at: "2026-06-19T00:00:00Z",
+              updated_at: "2026-06-19T00:00:00Z",
+            },
+          ]);
+        }
+
+        if (path === "/api/v1/projects/demo-project/namespaces") {
+          return jsonResponse([
+            {
+              id: "namespace-1",
+              project_id: "project-1",
+              name: "common",
+              created_at: "2026-06-19T00:00:00Z",
+              updated_at: "2026-06-19T00:00:00Z",
+            },
+          ]);
+        }
+
+        if (path === "/api/v1/projects/demo-project/environments") {
+          return jsonResponse([
+            {
+              id: "environment-1",
+              project_id: "project-1",
+              name: "Production",
+              slug: "production",
+              created_at: "2026-06-19T00:00:00Z",
+              updated_at: "2026-06-19T00:00:00Z",
+            },
+          ]);
+        }
+
+        if (
+          path ===
+          "/api/v1/projects/demo-project/translations/grid?environment=production&namespace=common&languages=en&search=&page=1&page_size=25"
+        ) {
+          return jsonResponse({ items: [], total: 0, page: 1, page_size: 25 });
+        }
+
+        throw new Error(`Unexpected request: ${method} ${path}`);
+      }),
+    );
+
+    renderApp(["/projects/demo-project"]);
+
+    await user.click(await screen.findByRole("button", { name: "Translations" }));
+
+    expect(await screen.findByText("No translations match the current filters.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add your first translation key" }));
+
+    expect(screen.getByPlaceholderText("project.table.new_key_placeholder")).toHaveFocus();
+  });
+
   it("keeps project settings read-only for a member without edit permissions", async () => {
     const user = userEvent.setup();
 
@@ -906,6 +1106,89 @@ describe("App routing", () => {
       expect(screen.queryByText("/reset-password?token=one-time-token")).not.toBeInTheDocument();
     });
     Reflect.deleteProperty(navigator, "clipboard");
+  });
+
+  it("shows a clear-filters action in the empty users list state", async () => {
+    const user = userEvent.setup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(typeof input === "string" ? input : input.toString(), "http://localhost");
+        const path = url.pathname;
+
+        if (isLocaleRequest(url.pathname)) {
+          return jsonResponse(TEST_LOCALE_MESSAGES);
+        }
+
+        if (isMetadataRequest(url.pathname)) {
+          return jsonResponse({
+            version: "v1",
+            languages: [{ code: "en", name: "English" }],
+            namespaces: [{ name: "common" }],
+          });
+        }
+
+        if (path === "/api/v1/me") {
+          return jsonResponse({
+            user: { id: "user-1", email: "admin@example.com", display_name: "Administrator" },
+          });
+        }
+
+        if (path === "/api/v1/me/permissions") {
+          return jsonResponse({ permissions: ["ManageUsers"] });
+        }
+
+        if (path === "/api/v1/projects/catalog") {
+          return jsonResponse([]);
+        }
+
+        if (path === "/api/v1/users/summary") {
+          const search = url.searchParams.get("search") ?? "";
+          const matches = search === "" || "administrator".includes(search) || "admin@example.com".includes(search);
+          return jsonResponse(
+            matches
+              ? [
+                  {
+                    id: "user-1",
+                    email: "admin@example.com",
+                    display_name: "Administrator",
+                    is_active: true,
+                    created_at: "2026-06-19T00:00:00Z",
+                    updated_at: "2026-06-19T00:00:00Z",
+                    direct_permissions_count: 1,
+                    project_access_count: 0,
+                    selected_project_relation: null,
+                  },
+                ]
+              : [],
+          );
+        }
+
+        if (path.startsWith("/api/v1/users/") && path.endsWith("/project-access")) {
+          return jsonResponse([]);
+        }
+
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderApp(["/users"]);
+
+    expect(await screen.findByRole("heading", { name: "Users and permissions" })).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /Administrator/ })).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox", { name: "Search users" }), "nomatch");
+
+    expect(await screen.findByText("No users match the current filters.")).toBeInTheDocument();
+    const emptyStateClearButton = within(
+      screen.getByText("No users match the current filters.").parentElement as HTMLElement,
+    ).getByRole("button", { name: "Clear filters" });
+
+    await user.click(emptyStateClearButton);
+
+    expect(screen.getByRole("textbox", { name: "Search users" })).toHaveValue("");
+    expect(await screen.findByRole("row", { name: /Administrator/ })).toBeInTheDocument();
   });
 
   it("submits a reset password token from the public page", async () => {

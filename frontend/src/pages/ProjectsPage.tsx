@@ -58,7 +58,11 @@ export function ProjectsPage() {
           <span className="badge">{projects.length}</span>
         </header>
 
-        <ProjectsTable projects={projects} />
+        <ProjectsTable
+          canCreateProjects={canCreateProjects}
+          onCreateProject={() => setIsCreateDialogOpen(true)}
+          projects={projects}
+        />
       </article>
 
       <CreateProjectDialog

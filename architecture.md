@@ -51,7 +51,7 @@ Authorization for the admin API is permission-based.
 
 In MVP, project access is controlled by `user_project_access`.
 
-Environment access is controlled only by environment-specific permission codes such as `ReadDevelopment`, `EditStaging`, and `EditProduction`.
+Reading translations is controlled by the project-wide `ReadTranslations` permission; there is no per-environment read permission. Writing translations is controlled by environment-specific permission codes: `EditAll` covers every environment except `production`, and `EditProd` is required for `production`.
 
 Roles are out of scope for MVP.
 
@@ -344,14 +344,13 @@ ExportTranslations
 ## Environments
 
 ```text
-ReadDevelopment
-ReadStaging
-ReadProduction
-
-EditDevelopment
-EditStaging
-EditProduction
+EditAll
+EditProd
 ```
+
+There is no per-environment read permission; `ReadTranslations` already covers every
+environment. `EditAll` covers every environment except `production`, and `EditProd` is
+required for `production`.
 
 ## Future
 
@@ -391,7 +390,7 @@ To edit a translation in production:
 Authenticated User
 Project Access or Project Ownership
 EditTranslations
-EditProduction
+EditProd
 ```
 
 Required simultaneously.

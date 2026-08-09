@@ -40,6 +40,17 @@ Starting with `0.1.0`, use forward-only migrations only and do not rewrite migra
 
 ---
 
+# Technology Stack
+
+* Backend: Rust, Axum, SQLite (via sqlx)
+* Frontend: React, TypeScript, custom CSS, [Lucide](https://lucide.dev) icons
+* No UI component library — no MUI, no Bootstrap, no other design-system framework.
+  See [docs/frontend-style-guide.md](docs/frontend-style-guide.md) for the custom CSS tokens
+  and component patterns.
+* Deployment: Docker or native binary
+
+---
+
 # Why OxideRelay?
 
 A typical localization setup looks like this:

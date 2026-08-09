@@ -248,7 +248,6 @@ Steps:
 3. Assign a limited direct permission set, for example:
    - `ViewProjects`
    - `ReadTranslations`
-   - `ReadProduction`
 4. Add that user to the project as a member.
 5. Sign in as that member.
 

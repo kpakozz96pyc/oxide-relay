@@ -278,6 +278,61 @@ th {
   box-shadow: 0 0 0 3px color-mix(in srgb, #fdba74 35%, transparent 65%);
 }
 
+.grid-cell {
+  position: relative;
+}
+
+.grid-cell .cell-status-dot {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  pointer-events: none;
+}
+
+.cell-status-dot.is-dirty {
+  background: var(--color-info-text);
+}
+
+.cell-status-dot.is-saving {
+  background: var(--text-secondary);
+  animation: pulse-dot 900ms ease-in-out infinite;
+}
+
+.cell-status-dot.is-saved {
+  background: var(--color-success-text);
+}
+
+.cell-status-dot.is-error {
+  background: var(--color-danger-text);
+}
+
+.grid-input.is-dirty:not(:focus) {
+  border-color: var(--color-info-border);
+}
+
+.grid-input.is-saving:not(:focus) {
+  border-color: var(--border-strong);
+  opacity: 0.85;
+}
+
+.grid-input.is-saved:not(:focus) {
+  border-color: var(--color-success-border);
+  background: color-mix(in srgb, var(--color-success-bg) 70%, var(--surface-raised) 30%);
+}
+
+.grid-input.is-error:not(:focus) {
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-bg);
+}
+
+.grid-input.is-empty-value:not(:focus) {
+  border-style: dashed;
+  border-color: var(--border-strong);
+}
+
 .translation-toolbar {
   display: grid;
   gap: var(--space-4);
@@ -1516,6 +1571,11 @@ th {
    ============================================================ */
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
 }
 
 @keyframes fade-up {

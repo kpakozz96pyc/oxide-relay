@@ -15,6 +15,17 @@ The primary reference specimen is the compact users table on the `Users and perm
 
 This guide documents the style that already exists in the codebase and clarifies which patterns are preferred going forward.
 
+## Frontend Library Decision
+
+OxideRelay stays on custom CSS with no UI component library (no MUI, no MUI
+DataGrid, no Bootstrap, no other design-system framework). This decision is
+final and applies to every screen, including data-heavy views like the
+translation grid: table density, keyboard navigation, and pagination are
+solved with the existing table patterns and tokens below, not by adopting a
+grid/component library. Do not reopen this question without a clear product
+need; if one emerges, it needs its own migration epic rather than an
+incremental library addition.
+
 ## Core Visual Principles
 
 1. Dark, console-like interface first.

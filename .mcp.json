@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "plane": {
+      "type": "stdio",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "repo_root=$(git rev-parse --show-toplevel) && export PLANE_API_KEY=$(jq -er .plane \"$repo_root/.secrets/secrets.json\") && export PLANE_WORKSPACE_SLUG=zeroclaw_kpakozz96pyc && export PLANE_BASE_URL=https://api.plane.so && exec uvx plane-mcp-server==0.2.10 stdio"
+      ],
+      "env": {}
+    }
+  }
+}

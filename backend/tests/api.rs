@@ -1141,6 +1141,133 @@ async fn create_user_rejects_invalid_email_and_weak_password() {
 }
 
 #[tokio::test]
+async fn last_active_administrator_cannot_be_removed_deactivated_or_stripped_of_manage_users() {
+    let harness = TestHarness::new().await;
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+
+    let list_users = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/users")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(list_users.status(), StatusCode::OK);
+    let users = json_body(list_users).await;
+    let admin_id = users
+        .as_array()
+        .expect("users array")
+        .iter()
+        .find(|user| user["email"] == "admin@example.com")
+        .expect("bootstrap admin")["id"]
+        .as_str()
+        .expect("admin id")
+        .to_owned();
+
+    // Deleting the sole administrator is blocked.
+    let delete_sole_admin = harness
+        .request(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/users/{admin_id}"))
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(delete_sole_admin.status(), StatusCode::BAD_REQUEST);
+    let delete_sole_admin_body = json_body(delete_sole_admin).await;
+    assert_eq!(delete_sole_admin_body["error"]["code"], "ValidationError");
+
+    // Deactivating the sole administrator is blocked.
+    let deactivate_sole_admin = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{admin_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(json!({ "is_active": false }).to_string()))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(deactivate_sole_admin.status(), StatusCode::BAD_REQUEST);
+    let deactivate_sole_admin_body = json_body(deactivate_sole_admin).await;
+    assert_eq!(deactivate_sole_admin_body["error"]["code"], "ValidationError");
+
+    // Stripping ManageUsers from the sole administrator is blocked.
+    let strip_sole_admin = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{admin_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({ "permission_codes": ["ViewProjects"] }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(strip_sole_admin.status(), StatusCode::BAD_REQUEST);
+    let strip_sole_admin_body = json_body(strip_sole_admin).await;
+    assert_eq!(strip_sole_admin_body["error"]["code"], "ValidationError");
+
+    // Once a second active user holds ManageUsers, the guard no longer blocks the first admin.
+    let second_admin_id = harness
+        .insert_user("second-admin@example.com", "second-password", "Second Admin", true)
+        .await;
+    let grant_second_admin = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{second_admin_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({ "permission_codes": ["ManageUsers"] }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(grant_second_admin.status(), StatusCode::NO_CONTENT);
+
+    let deactivate_first_admin_now_allowed = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{admin_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(json!({ "is_active": false }).to_string()))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(deactivate_first_admin_now_allowed.status(), StatusCode::OK);
+
+    // The remaining administrator (second-admin) is now the last one and is protected in turn.
+    let second_admin_cookie = harness
+        .login("second-admin@example.com", "second-password")
+        .await;
+    let delete_last_remaining_admin = harness
+        .request(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/users/{second_admin_id}"))
+                .header(header::COOKIE, second_admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(delete_last_remaining_admin.status(), StatusCode::BAD_REQUEST);
+    let delete_last_remaining_admin_body = json_body(delete_last_remaining_admin).await;
+    assert_eq!(delete_last_remaining_admin_body["error"]["code"], "ValidationError");
+}
+
+#[tokio::test]
 async fn login_rate_limit_blocks_attempts_after_the_fifteenth_failure() {
     let harness = TestHarness::new().await;
     let identifier_hash = oxiderelay_backend::util::sha256_hex("admin@example.com");

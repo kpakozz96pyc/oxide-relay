@@ -119,6 +119,10 @@ pub async fn update_user(
     auth::require_permission(&state, &actor.id, "ManageUsers").await?;
     validate_update_user(&payload)?;
 
+    if payload.is_active == Some(false) {
+        guard_last_active_administrator(&state, &user_id).await?;
+    }
+
     let record = users::update(
         &state.pool,
         &user_id,
@@ -146,6 +150,7 @@ pub async fn delete_user(
     Path(user_id): Path<String>,
 ) -> AppResult<StatusCode> {
     auth::require_permission(&state, &actor.id, "ManageUsers").await?;
+    guard_last_active_administrator(&state, &user_id).await?;
     users::delete(&state.pool, &user_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -252,6 +257,15 @@ pub async fn replace_user_permissions(
     Json(payload): Json<ReplaceUserPermissionsRequest>,
 ) -> AppResult<StatusCode> {
     auth::require_permission(&state, &actor.id, "ManagePermissions").await?;
+
+    let keeps_manage_users = payload
+        .permission_codes
+        .iter()
+        .any(|code| code.trim() == "ManageUsers");
+    if !keeps_manage_users {
+        guard_last_active_administrator(&state, &user_id).await?;
+    }
+
     permissions::replace_for_user(&state.pool, &user_id, &payload.permission_codes).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -434,6 +448,32 @@ async fn require_any_admin_permission(state: &AppState, user_id: &str) -> AppRes
     Err(ApiError::permission_denied(
         "Missing required permission: ManageUsers or ManagePermissions.",
     ))
+}
+
+/// Blocks removing, deactivating, or stripping ManageUsers from `user_id` when doing so
+/// would leave the system with no active user holding ManageUsers.
+async fn guard_last_active_administrator(state: &AppState, user_id: &str) -> AppResult<()> {
+    let target = users::find_by_id(&state.pool, user_id).await?;
+    if !target.is_active {
+        return Ok(());
+    }
+
+    let has_manage_users =
+        permissions::user_has_permission(&state.pool, user_id, "ManageUsers").await?;
+    if !has_manage_users {
+        return Ok(());
+    }
+
+    let remaining_admins =
+        permissions::count_other_active_users_with_permission(&state.pool, user_id, "ManageUsers")
+            .await?;
+    if remaining_admins == 0 {
+        return Err(ApiError::validation(
+            "Cannot remove the last active administrator. At least one active user must keep the ManageUsers permission.",
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_update_user(payload: &UpdateUserRequest) -> AppResult<()> {

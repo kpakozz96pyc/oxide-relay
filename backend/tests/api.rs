@@ -328,6 +328,137 @@ async fn project_owner_has_implicit_access_but_member_without_permission_is_forb
 }
 
 #[tokio::test]
+async fn non_member_without_project_access_receives_not_found() {
+    let harness = TestHarness::new().await;
+    let owner_id = harness
+        .insert_user("outsider-owner@example.com", "owner-password", "Owner", true)
+        .await;
+    harness
+        .insert_user("outsider@example.com", "outsider-password", "Outsider", true)
+        .await;
+    harness
+        .insert_project(&owner_id, "Outsider Project", "outsider-project")
+        .await;
+
+    let outsider_cookie = harness
+        .login("outsider@example.com", "outsider-password")
+        .await;
+    let response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/outsider-project")
+                .header(header::COOKIE, outsider_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = json_body(response).await;
+    assert_eq!(body["error"]["code"], "NotFound");
+}
+
+#[tokio::test]
+async fn project_owner_can_update_and_delete_project_without_explicit_permissions() {
+    let harness = TestHarness::new().await;
+    let owner_id = harness
+        .insert_user(
+            "self-service-owner@example.com",
+            "owner-password",
+            "Owner",
+            true,
+        )
+        .await;
+    harness
+        .insert_project(&owner_id, "Self Service Project", "self-service-project")
+        .await;
+
+    // The owner holds no rows in user_permissions; is_owner alone must grant access.
+    let owner_cookie = harness
+        .login("self-service-owner@example.com", "owner-password")
+        .await;
+
+    let update_response = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/projects/self-service-project")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::from(
+                    json!({ "name": "Renamed Project" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(update_response.status(), StatusCode::OK);
+    let updated = json_body(update_response).await;
+    assert_eq!(updated["name"], "Renamed Project");
+
+    let delete_response = harness
+        .request(
+            Request::builder()
+                .method("DELETE")
+                .uri("/api/v1/projects/self-service-project")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn member_without_edit_permission_cannot_update_project() {
+    let harness = TestHarness::new().await;
+    let owner_id = harness
+        .insert_user(
+            "readonly-owner@example.com",
+            "owner-password",
+            "Owner",
+            true,
+        )
+        .await;
+    let member_id = harness
+        .insert_user(
+            "readonly-member@example.com",
+            "member-password",
+            "Member",
+            true,
+        )
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Readonly Project", "readonly-project")
+        .await;
+    harness.add_project_access(&member_id, &project_id).await;
+    harness
+        .assign_permissions(&member_id, &["ViewProjects"])
+        .await;
+
+    let member_cookie = harness
+        .login("readonly-member@example.com", "member-password")
+        .await;
+    let update_response = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/projects/readonly-project")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::from(
+                    json!({ "name": "Should Not Apply" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(update_response.status(), StatusCode::FORBIDDEN);
+    let body = json_body(update_response).await;
+    assert_eq!(body["error"]["code"], "PermissionDenied");
+}
+
+#[tokio::test]
 async fn public_delivery_endpoints_return_expected_payloads() {
     let harness = TestHarness::new().await;
     let owner_id = harness

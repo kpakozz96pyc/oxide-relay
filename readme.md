@@ -630,7 +630,10 @@ The default [compose.yaml](compose.yaml) uses the published image
 `kpakozz96pyc/oxiderelay:latest`, stores SQLite data in the `oxiderelay-data`
 volume, and reads runtime settings from `.env`.
 
-For predictable upgrades, replace `OXIDERELAY_IMAGE=...:latest` in `.env` with a release tag.
+Every push of a `vX.Y.Z` git tag publishes a matching `kpakozz96pyc/oxiderelay:vX.Y.Z`
+image (stable releases also update `:latest`). For predictable, repeatable
+upgrades, pin `OXIDERELAY_IMAGE` in `.env` to that release tag instead of
+`:latest`, since `:latest` can change under you between deploys.
 
 The container serves both the admin UI at `/` and the API at `/api`.
 Alternative installation and launch options are documented above in `Run Modes`.

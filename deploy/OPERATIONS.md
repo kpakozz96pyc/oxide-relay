@@ -171,6 +171,37 @@ Recommended upgrade flow for `0.1.0` and later:
 3. Watch startup logs for migration completion.
 4. Run a smoke check against `/api/health` and one authenticated endpoint.
 
+## Release Checklist
+
+Steps to prepare and publish a new OxideRelay release, in order:
+
+1. Bump the version in the two places it is declared:
+   - `Cargo.toml` (`version = "x.y.z"`) — the backend crate, the `/api/health`
+     response, and the OpenAPI document version all derive from this
+     automatically (`backend/src/http/docs.rs` reads it via
+     `env!("CARGO_PKG_VERSION")`), so there is nothing else to edit on the
+     backend side.
+   - `frontend/package.json` (`"version"`) — kept in sync with `Cargo.toml` by
+     the `Version consistency` CI job, which fails the build if the two
+     diverge.
+2. Run the backend tests: `cargo test --locked`.
+3. Run the frontend tests and build: `cd frontend && npm test -- --run && npm run build`.
+4. Verify the Docker image builds from a clean checkout:
+   `docker build -f deploy/Dockerfile -t oxiderelay:release-check .`
+5. Run a smoke test against the built image, either `bash scripts/smoke-compose.sh`
+   or by walking the Smoke Checklist below against a container started from the
+   image built in step 4.
+6. Review `readme.md` and this file for stale version references, changed
+   defaults, or environment variables introduced since the last release.
+7. Push the release tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. This
+   triggers the
+   [Publish Docker image](../.github/workflows/docker-publish.yml) workflow,
+   which builds and pushes `kpakozz96pyc/oxiderelay:vX.Y.Z` (and `:latest` for
+   stable, non-pre-release tags).
+8. Create GitHub release notes for the tag: summarize user-facing changes,
+   reference closed issues/PRs, and call out anything migration-relevant per
+   the Schema and Upgrade Policy above.
+
 ## Smoke Checklist
 
 For a fresh environment:

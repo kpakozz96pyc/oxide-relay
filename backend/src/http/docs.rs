@@ -138,7 +138,7 @@ use crate::{
     modifiers(&DeliverySecurityAddon),
     info(
         title = "OxideRelay API",
-        version = "0.0.9",
+        version = env!("CARGO_PKG_VERSION"),
         description = "Admin and delivery API for OxideRelay MVP."
     )
 )]

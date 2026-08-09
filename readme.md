@@ -164,6 +164,28 @@ Production
 
 ---
 
+## Placeholder Validation
+
+The translation grid warns when a value is missing a placeholder that another
+language's value for the same key uses, so dynamic content isn't silently
+dropped in translation.
+
+Two placeholder syntaxes are recognized:
+
+```text
+{{name}}
+{name}
+```
+
+Both use the same character set for the placeholder name: letters, digits,
+`_`, and `.` (for example `{{user.first_name}}`). The check compares the set
+of placeholder names across every language that currently has a value for a
+key; a language is flagged only when it is missing a name that at least one
+other populated language uses. This is a non-blocking warning shown in the
+grid cell — it never prevents saving.
+
+---
+
 # Users and Permissions
 
 OxideRelay uses a permission-based access model.
@@ -431,6 +453,16 @@ npm run dev
 Use this mode when changing frontend or backend code. The Vite development server
 proxies `/api` and `/static` to the backend.
 
+To populate the admin UI with sample data for screenshots or manual testing,
+seed a demo project after the bootstrap admin has signed in at least once:
+
+```bash
+cargo run -p oxiderelay-backend -- --config backend/config.toml.example demo-seed --owner-email admin@example.com
+```
+
+This is a **development-only** command — see [Demo Seed](deploy/OPERATIONS.md#demo-seed-development-only)
+in the operations runbook. Never run it against a production database.
+
 ### 2. Production-Style Local Mode
 
 Build the frontend first, then let the backend serve both the UI and API:
@@ -650,6 +682,7 @@ Alternative installation and launch options are documented above in `Run Modes`.
 * Translation CRUD
 * Translation Import
 * Translation Export
+* Placeholder Validation (warning-only)
 
 ## Security
 

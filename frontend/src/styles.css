@@ -309,6 +309,19 @@ th {
   background: var(--color-danger-text);
 }
 
+.cell-status-dot.corner-left {
+  right: auto;
+  left: 8px;
+}
+
+.cell-status-dot.is-placeholder-gap {
+  background: var(--color-warning-text);
+}
+
+.grid-input.has-placeholder-gap:not(:focus) {
+  border-color: var(--color-warning-border);
+}
+
 .grid-input.is-dirty:not(:focus) {
   border-color: var(--color-info-border);
 }

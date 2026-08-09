@@ -246,6 +246,13 @@ pub enum Command {
         #[arg(long)]
         email: String,
     },
+    /// Create a demo project with sample languages, namespaces, and
+    /// translations, owned by an existing user. Development use only.
+    DemoSeed {
+        /// Email of the existing, active user who should own the demo project.
+        #[arg(long = "owner-email")]
+        owner_email: String,
+    },
 }
 
 #[derive(Debug, Parser)]
@@ -530,6 +537,22 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::PasswordResetLink { email }) if email == "admin@example.com"
+        ));
+    }
+
+    #[test]
+    fn demo_seed_subcommand_accepts_owner_email() {
+        let cli = Cli::try_parse_from([
+            "oxiderelay-backend",
+            "demo-seed",
+            "--owner-email",
+            "admin@example.com",
+        ])
+        .expect("cli");
+
+        assert!(matches!(
+            cli.command,
+            Some(Command::DemoSeed { owner_email }) if owner_email == "admin@example.com"
         ));
     }
 }

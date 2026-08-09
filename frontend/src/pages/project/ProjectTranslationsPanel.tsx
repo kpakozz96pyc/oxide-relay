@@ -26,6 +26,13 @@ type NewTermDraft = {
 
 type TranslationViewMode = "all" | "missing";
 
+type CellStatus = "dirty" | "saving" | "saved" | "error";
+
+type CellState = {
+  status: CellStatus;
+  message?: string;
+};
+
 export function ProjectTranslationsPanel({
   project,
   projectSlug,
@@ -54,7 +61,12 @@ export function ProjectTranslationsPanel({
   const [missingTargetLanguageCodes, setMissingTargetLanguageCodes] = useState<string[]>([]);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
+  const [cellStates, setCellStates] = useState<Record<string, CellState>>({});
   const [focusedCell, setFocusedCell] = useState<string | null>(null);
+  const draftValuesRef = useRef<Record<string, string>>({});
+  const cellStatesRef = useRef<Record<string, CellState>>({});
+  const cellTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const pendingSaveValuesRef = useRef<Record<string, string>>({});
   const [newTermDrafts, setNewTermDrafts] = useState<NewTermDraft[]>([
     { id: createDraftId(), key: "", description: "", values: {} },
   ]);
@@ -162,12 +174,41 @@ export function ProjectTranslationsPanel({
   });
 
   useEffect(() => {
+    draftValuesRef.current = draftValues;
+  }, [draftValues]);
+
+  useEffect(() => {
+    cellStatesRef.current = cellStates;
+  }, [cellStates]);
+
+  useEffect(() => {
+    const timers = cellTimersRef.current;
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    // Cells the user is actively editing (status "dirty") keep their in-progress
+    // text even when a background refetch (triggered by saving a different cell)
+    // brings in fresh server data, so an unsaved edit is never silently dropped.
     const nextDrafts: Record<string, string> = {};
     for (const row of translationsQuery.data?.items ?? []) {
-      nextDrafts[`desc:${row.translation_key_id}`] = row.description ?? "";
+      const descKey = `desc:${row.translation_key_id}`;
+      const baselineDescription = row.description ?? "";
+      nextDrafts[descKey] =
+        cellStatesRef.current[descKey]?.status === "dirty"
+          ? (draftValuesRef.current[descKey] ?? baselineDescription)
+          : baselineDescription;
+
       for (const languageCode of displayLanguageCodes) {
-        nextDrafts[`value:${row.translation_key_id}:${languageCode}`] =
-          row.values[languageCode]?.value ?? "";
+        const valueKey = `value:${row.translation_key_id}:${languageCode}`;
+        const baselineValue = row.values[languageCode]?.value ?? "";
+        nextDrafts[valueKey] =
+          cellStatesRef.current[valueKey]?.status === "dirty"
+            ? (draftValuesRef.current[valueKey] ?? baselineValue)
+            : baselineValue;
       }
     }
     setDraftValues(nextDrafts);
@@ -243,6 +284,57 @@ export function ProjectTranslationsPanel({
     }));
   };
 
+  const clearCellTimer = (draftKey: string) => {
+    const timer = cellTimersRef.current.get(draftKey);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      cellTimersRef.current.delete(draftKey);
+    }
+  };
+
+  const setCellState = (draftKey: string, state: CellState) => {
+    clearCellTimer(draftKey);
+    setCellStates((current) => ({ ...current, [draftKey]: state }));
+  };
+
+  const clearCellState = (draftKey: string) => {
+    clearCellTimer(draftKey);
+    setCellStates((current) => {
+      if (!(draftKey in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[draftKey];
+      return next;
+    });
+  };
+
+  // Briefly show a "saved" indicator, then fade the cell back to its idle state.
+  const flashCellSaved = (draftKey: string) => {
+    setCellState(draftKey, { status: "saved" });
+    const timer = setTimeout(() => {
+      setCellStates((current) => {
+        if (current[draftKey]?.status !== "saved") {
+          return current;
+        }
+        const next = { ...current };
+        delete next[draftKey];
+        return next;
+      });
+      cellTimersRef.current.delete(draftKey);
+    }, 1600);
+    cellTimersRef.current.set(draftKey, timer);
+  };
+
+  const handleTrackedDraftChange = (draftKey: string, value: string, baselineValue: string) => {
+    updateDraftValue(draftKey, value);
+    if (value.trim() === baselineValue.trim()) {
+      clearCellState(draftKey);
+      return;
+    }
+    setCellState(draftKey, { status: "dirty" });
+  };
+
   const focusNextGridInput = (currentTarget: HTMLElement) => {
     const focusable = Array.from(
       translationGridRef.current?.querySelectorAll<HTMLElement>("[data-grid-focus='true']") ?? [],
@@ -261,10 +353,26 @@ export function ProjectTranslationsPanel({
     if (nextDescription === currentDescription) {
       return;
     }
-    await updateMutation.mutateAsync({
-      translationValueId: row.representative_translation_id,
-      description: nextDescription || null,
-    });
+
+    // Enter commits immediately and then moves focus, which fires a native
+    // blur on the same field; guard against sending the same edit twice.
+    if (pendingSaveValuesRef.current[draftKey] === nextDescription) {
+      return;
+    }
+    pendingSaveValuesRef.current[draftKey] = nextDescription;
+    setCellState(draftKey, { status: "saving" });
+
+    try {
+      await updateMutation.mutateAsync({
+        translationValueId: row.representative_translation_id,
+        description: nextDescription || null,
+      });
+      flashCellSaved(draftKey);
+    } catch (error) {
+      setCellState(draftKey, { status: "error", message: buildErrorMessage(error) });
+    } finally {
+      delete pendingSaveValuesRef.current[draftKey];
+    }
   };
 
   const commitTranslationValue = async (row: TranslationGridRow, languageCode: string) => {
@@ -275,6 +383,7 @@ export function ProjectTranslationsPanel({
 
     if (!nextValue) {
       updateDraftValue(draftKey, currentValue);
+      clearCellState(draftKey);
       return;
     }
 
@@ -282,25 +391,56 @@ export function ProjectTranslationsPanel({
       return;
     }
 
-    if (existingCell?.id) {
-      await updateMutation.mutateAsync({
-        translationValueId: existingCell.id,
-        value: nextValue,
-      });
+    // Enter commits immediately and then moves focus, which fires a native
+    // blur on the same field; guard against sending the same edit twice.
+    if (pendingSaveValuesRef.current[draftKey] === nextValue) {
       return;
     }
+    pendingSaveValuesRef.current[draftKey] = nextValue;
+    setCellState(draftKey, { status: "saving" });
 
-    await apiPost(`/api/v1/projects/${projectSlug}/translations`, {
-      environment,
-      language: languageCode,
-      namespace: row.namespace,
-      key: row.key,
-      value: nextValue,
-      description: (draftValues[`desc:${row.translation_key_id}`] ?? row.description ?? "").trim() || undefined,
-    });
-    await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations-grid"] });
-    await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations"] });
+    try {
+      if (existingCell?.id) {
+        await updateMutation.mutateAsync({
+          translationValueId: existingCell.id,
+          value: nextValue,
+        });
+      } else {
+        await apiPost(`/api/v1/projects/${projectSlug}/translations`, {
+          environment,
+          language: languageCode,
+          namespace: row.namespace,
+          key: row.key,
+          value: nextValue,
+          description: (draftValues[`desc:${row.translation_key_id}`] ?? row.description ?? "").trim() || undefined,
+        });
+        await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations-grid"] });
+        await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "translations"] });
+      }
+      flashCellSaved(draftKey);
+    } catch (error) {
+      setCellState(draftKey, { status: "error", message: buildErrorMessage(error) });
+    } finally {
+      delete pendingSaveValuesRef.current[draftKey];
+    }
   };
+
+  const cellStatusLabel = (status: CellStatus) => {
+    switch (status) {
+      case "dirty":
+        return t("project.table.cell_status.dirty");
+      case "saving":
+        return t("project.table.cell_status.saving");
+      case "saved":
+        return t("project.table.cell_status.saved");
+      case "error":
+        return t("project.table.cell_status.error");
+      default:
+        return "";
+    }
+  };
+
+  const cellStatusClassName = (status?: CellStatus) => (status ? ` is-${status}` : "");
 
   const toggleVisibleLanguage = (languageCode: string) => {
     setSelectedLanguageCodes((current) => {
@@ -484,10 +624,6 @@ export function ProjectTranslationsPanel({
         </label>
       </div>
 
-      {createMutation.isError ? <div className="banner error">{buildErrorMessage(createMutation.error)}</div> : null}
-      {updateMutation.isError ? <div className="banner error">{buildErrorMessage(updateMutation.error)}</div> : null}
-      {deleteMutation.isError ? <div className="banner error">{buildErrorMessage(deleteMutation.error)}</div> : null}
-
       <div className="translation-toolbar">
         <label className="field search-field">
           <span>{t("project.search.label")}</span>
@@ -567,6 +703,15 @@ export function ProjectTranslationsPanel({
 
       {translationsQuery.data ? (
         <>
+          {createMutation.isError ? (
+            <div className="banner error">{buildErrorMessage(createMutation.error)}</div>
+          ) : null}
+          {updateMutation.isError ? (
+            <div className="banner error">{buildErrorMessage(updateMutation.error)}</div>
+          ) : null}
+          {deleteMutation.isError ? (
+            <div className="banner error">{buildErrorMessage(deleteMutation.error)}</div>
+          ) : null}
           <div
             className="table-shell translation-grid-shell"
             onBlurCapture={handleTranslationGridBlurCapture}
@@ -675,60 +820,89 @@ export function ProjectTranslationsPanel({
                       </tr>
                     ))
                   : null}
-                {translationRows.map((translation) => (
+                {translationRows.map((translation) => {
+                  const descKey = `desc:${translation.translation_key_id}`;
+                  const descState = cellStates[descKey];
+                  return (
                   <tr key={translation.translation_key_id}>
                     <td>{translation.namespace}</td>
                     <td>{translation.key}</td>
                     <td>
-                      <input
-                        className={
-                          focusedCell === `desc:${translation.translation_key_id}` ? "grid-input is-focused" : "grid-input"
-                        }
-                        data-grid-focus="true"
-                        onBlur={() => {
-                          void commitDescription(translation);
-                        }}
-                        onChange={(event) => updateDraftValue(`desc:${translation.translation_key_id}`, event.target.value)}
-                        onFocus={() => setFocusedCell(`desc:${translation.translation_key_id}`)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
+                      <div className="grid-cell">
+                        <input
+                          className={`${focusedCell === descKey ? "grid-input is-focused" : "grid-input"}${cellStatusClassName(descState?.status)}`}
+                          data-grid-focus="true"
+                          onBlur={() => {
                             void commitDescription(translation);
-                            focusNextGridInput(event.currentTarget);
+                          }}
+                          onChange={(event) =>
+                            handleTrackedDraftChange(descKey, event.target.value, translation.description ?? "")
                           }
-                        }}
-                        placeholder={t("project.table.description_placeholder")}
-                        value={draftValues[`desc:${translation.translation_key_id}`] ?? ""}
-                      />
+                          onFocus={() => setFocusedCell(descKey)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void commitDescription(translation);
+                              focusNextGridInput(event.currentTarget);
+                            }
+                          }}
+                          placeholder={t("project.table.description_placeholder")}
+                          title={descState?.status === "error" ? descState.message : undefined}
+                          value={draftValues[descKey] ?? ""}
+                        />
+                        {descState ? (
+                          <span
+                            aria-hidden="true"
+                            className={`cell-status-dot is-${descState.status}`}
+                            title={cellStatusLabel(descState.status)}
+                          />
+                        ) : null}
+                      </div>
                     </td>
                     {displayLanguageCodes.map((languageCode) => {
                       const draftKey = `value:${translation.translation_key_id}:${languageCode}`;
                       const hasValue = Boolean(translation.values[languageCode]?.id);
+                      const cellState = cellStates[draftKey];
+                      const emptyClassName = !hasValue ? (viewMode === "missing" ? " is-missing" : " is-empty-value") : "";
                       return (
                         <td
                           className={viewMode === "missing" && !hasValue ? "missing-translation-cell" : undefined}
                           key={languageCode}
                         >
-                          <input
-                            className={`${focusedCell === draftKey ? "grid-input is-focused" : "grid-input"}${
-                              viewMode === "missing" && !hasValue ? " is-missing" : ""
-                            }`}
-                            data-grid-focus="true"
-                            onBlur={() => {
-                              void commitTranslationValue(translation, languageCode);
-                            }}
-                            onChange={(event) => updateDraftValue(draftKey, event.target.value)}
-                            onFocus={() => setFocusedCell(draftKey)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
+                          <div className="grid-cell">
+                            <input
+                              className={`${focusedCell === draftKey ? "grid-input is-focused" : "grid-input"}${emptyClassName}${cellStatusClassName(cellState?.status)}`}
+                              data-grid-focus="true"
+                              onBlur={() => {
                                 void commitTranslationValue(translation, languageCode);
-                                focusNextGridInput(event.currentTarget);
+                              }}
+                              onChange={(event) =>
+                                handleTrackedDraftChange(
+                                  draftKey,
+                                  event.target.value,
+                                  translation.values[languageCode]?.value ?? "",
+                                )
                               }
-                            }}
-                            placeholder={hasValue ? "" : `${t("project.table.add_value")} ${languageCode}`}
-                            value={draftValues[draftKey] ?? ""}
-                          />
+                              onFocus={() => setFocusedCell(draftKey)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  void commitTranslationValue(translation, languageCode);
+                                  focusNextGridInput(event.currentTarget);
+                                }
+                              }}
+                              placeholder={hasValue ? "" : `${t("project.table.add_value")} ${languageCode}`}
+                              title={cellState?.status === "error" ? cellState.message : undefined}
+                              value={draftValues[draftKey] ?? ""}
+                            />
+                            {cellState ? (
+                              <span
+                                aria-hidden="true"
+                                className={`cell-status-dot is-${cellState.status}`}
+                                title={cellStatusLabel(cellState.status)}
+                              />
+                            ) : null}
+                          </div>
                         </td>
                       );
                     })}
@@ -750,7 +924,8 @@ export function ProjectTranslationsPanel({
                       </div>
                     </td> : null}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

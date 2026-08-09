@@ -29,6 +29,12 @@
 - Preserve the existing React, TypeScript, React Router, TanStack Query,
   Lucide, custom-CSS frontend stack. Do not add UI libraries without a clear
   product need.
+- The custom-CSS-vs-component-library question is decided: OxideRelay stays on
+  custom CSS with no UI component library. This applies to every screen,
+  including the translation grid — do not introduce MUI, MUI DataGrid, or any
+  other UI kit to solve grid, table, or data-density problems. Solve those
+  with the existing table patterns, server-side pagination, and tokens in
+  `docs/frontend-style-guide.md` instead.
 - Preserve authentication and permission behaviour unless the task explicitly
   requires a reviewed change.
 - Prefer existing API calls, query invalidation patterns, and shared UI styles

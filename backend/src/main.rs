@@ -4,7 +4,7 @@ use oxiderelay_backend::{
     app::AppState,
     config::{Command, Settings},
     db::{initialize as initialize_database, initialize_existing},
-    http, recovery,
+    http, recovery, seed,
 };
 use tokio::net::TcpListener;
 use tracing::info;
@@ -22,12 +22,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .compact()
         .init();
 
-    if let Some(Command::PasswordResetLink { email }) = command {
+    if let Some(Command::PasswordResetLink { email }) = &command {
         let pool = initialize_existing(&settings).await?;
-        let reset_link = recovery::generate_password_reset_link(&pool, &email).await?;
+        let reset_link = recovery::generate_password_reset_link(&pool, email).await?;
 
         println!("Password reset URL: {}", reset_link.reset_url);
         println!("Expires at: {}", reset_link.expires_at);
+        pool.close().await;
+        return Ok(());
+    }
+
+    if let Some(Command::DemoSeed { owner_email }) = &command {
+        let pool = initialize_existing(&settings).await?;
+        let summary = seed::run_demo_seed(&pool, owner_email).await?;
+
+        println!("Demo project created: {} ({})", summary.project_name, summary.project_slug);
+        println!("Languages: {}", summary.language_codes.join(", "));
+        println!("Namespaces: {}", summary.namespace_names.join(", "));
+        println!("Translation values seeded: {}", summary.translation_count);
         pool.close().await;
         return Ok(());
     }

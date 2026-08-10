@@ -16,6 +16,7 @@ import {
 import { usePermissionSet } from "../../hooks/usePermissionSet";
 import { useTranslation } from "../../i18n";
 import { editEnvironmentPermission } from "../../lib/permissions";
+import { findMissingPlaceholders } from "../../lib/placeholders";
 
 type NewTermDraft = {
   id: string;
@@ -823,6 +824,14 @@ export function ProjectTranslationsPanel({
                 {translationRows.map((translation) => {
                   const descKey = `desc:${translation.translation_key_id}`;
                   const descState = cellStates[descKey];
+                  const placeholderGaps = findMissingPlaceholders(
+                    Object.fromEntries(
+                      displayLanguageCodes.map((languageCode) => [
+                        languageCode,
+                        draftValues[`value:${translation.translation_key_id}:${languageCode}`] ?? "",
+                      ]),
+                    ),
+                  );
                   return (
                   <tr key={translation.translation_key_id}>
                     <td>{translation.namespace}</td>
@@ -864,6 +873,12 @@ export function ProjectTranslationsPanel({
                       const hasValue = Boolean(translation.values[languageCode]?.id);
                       const cellState = cellStates[draftKey];
                       const emptyClassName = !hasValue ? (viewMode === "missing" ? " is-missing" : " is-empty-value") : "";
+                      const missingPlaceholders = placeholderGaps[languageCode];
+                      const placeholderWarningClassName = missingPlaceholders ? " has-placeholder-gap" : "";
+                      const errorTitle = cellState?.status === "error" ? cellState.message : undefined;
+                      const placeholderTitle = missingPlaceholders
+                        ? `${t("project.table.placeholder_gap")} ${missingPlaceholders.map((name) => `{${name}}`).join(", ")}`
+                        : undefined;
                       return (
                         <td
                           className={viewMode === "missing" && !hasValue ? "missing-translation-cell" : undefined}
@@ -871,7 +886,7 @@ export function ProjectTranslationsPanel({
                         >
                           <div className="grid-cell">
                             <input
-                              className={`${focusedCell === draftKey ? "grid-input is-focused" : "grid-input"}${emptyClassName}${cellStatusClassName(cellState?.status)}`}
+                              className={`${focusedCell === draftKey ? "grid-input is-focused" : "grid-input"}${emptyClassName}${cellStatusClassName(cellState?.status)}${placeholderWarningClassName}`}
                               data-grid-focus="true"
                               onBlur={() => {
                                 void commitTranslationValue(translation, languageCode);
@@ -892,7 +907,7 @@ export function ProjectTranslationsPanel({
                                 }
                               }}
                               placeholder={hasValue ? "" : `${t("project.table.add_value")} ${languageCode}`}
-                              title={cellState?.status === "error" ? cellState.message : undefined}
+                              title={errorTitle ?? placeholderTitle}
                               value={draftValues[draftKey] ?? ""}
                             />
                             {cellState ? (
@@ -900,6 +915,13 @@ export function ProjectTranslationsPanel({
                                 aria-hidden="true"
                                 className={`cell-status-dot is-${cellState.status}`}
                                 title={cellStatusLabel(cellState.status)}
+                              />
+                            ) : null}
+                            {missingPlaceholders ? (
+                              <span
+                                aria-hidden="true"
+                                className="cell-status-dot corner-left is-placeholder-gap"
+                                title={placeholderTitle}
                               />
                             ) : null}
                           </div>

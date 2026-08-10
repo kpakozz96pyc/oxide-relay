@@ -45,6 +45,29 @@ an active user's email, and replaces any previous unused link for that user.
 The printed URL is relative to the deployment origin and expires after 15
 minutes. Do not store the URL in shell history, logs, tickets, or chat.
 
+## Demo Seed (Development Only)
+
+For local development and screenshots, the backend binary can create a demo
+project ("Demo Storefront") with sample languages, namespaces, and
+translations, owned by an existing user:
+
+```bash
+./target/release/oxiderelay-backend \
+  --config backend/config.toml.example \
+  demo-seed --owner-email admin@example.com
+```
+
+Like `password-reset-link`, this uses the normal `--database-path`,
+`OXIDERELAY_DATABASE_PATH`, and config-file precedence, and refuses to create a
+missing database — bootstrap the service normally first so at least one user
+exists. The command fails if a project with the demo slug (`demo-storefront`)
+already exists; delete it from the UI before re-seeding.
+
+**Development only.** Do not run this against a production database — it
+writes real rows (a project, languages, namespaces, and translations) with no
+separate "demo" flag or automatic cleanup. Delete the seeded project from the
+UI when you're done with it.
+
 ## Session Settings
 
 Relevant settings:

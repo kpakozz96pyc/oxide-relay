@@ -47,19 +47,45 @@ async fn bootstrap_initial_admin(
         return Ok(());
     }
 
-    let email = settings
-        .bootstrap_admin
-        .email
-        .as_deref()
-        .ok_or("missing OXIDERELAY_ADMIN_EMAIL for initial bootstrap")?;
-    let password = settings
-        .bootstrap_admin
-        .password
-        .as_deref()
-        .ok_or("missing OXIDERELAY_ADMIN_PASSWORD for initial bootstrap")?;
+    if !settings.bootstrap_admin.is_configured() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Database is empty. Initial administrator bootstrap is required. Set OXIDERELAY_ADMIN_EMAIL and OXIDERELAY_ADMIN_PASSWORD before first startup. After the first successful bootstrap, these variables are no longer required.",
+        )
+        .into());
+    }
 
-    let password_hash = crate::util::hash_password(password).map_err(|e| format!("{:?}", e))?;
-    let timestamp = crate::util::now_utc().map_err(|e| format!("{:?}", e))?;
+    let email = crate::util::validate_email(
+        settings
+            .bootstrap_admin
+            .email
+            .as_deref()
+            .expect("bootstrap admin email must exist when configured"),
+    )
+    .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?
+    .to_lowercase();
+
+    let password = crate::util::validate_password(
+        settings
+            .bootstrap_admin
+            .password
+            .as_deref()
+            .expect("bootstrap admin password must exist when configured"),
+    )
+    .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
+
+    if password == "change-me" {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "OXIDERELAY_ADMIN_PASSWORD must not use the placeholder value 'change-me'.",
+        )
+        .into());
+    }
+
+    let password_hash = crate::util::hash_password(password)
+        .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
+    let timestamp = crate::util::now_utc()
+        .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
     let user_id = Uuid::new_v4().to_string();
 
     let mut transaction = pool.begin().await?;
@@ -79,7 +105,7 @@ async fn bootstrap_initial_admin(
         "#,
     )
     .bind(&user_id)
-    .bind(email)
+    .bind(&email)
     .bind(password_hash)
     .bind("Administrator")
     .bind(&timestamp)

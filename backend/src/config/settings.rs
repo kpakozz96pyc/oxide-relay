@@ -134,7 +134,8 @@ impl Settings {
                     .bootstrap_admin
                     .as_ref()
                     .and_then(|admin| admin.email.clone())
-            });
+            })
+            .and_then(non_empty_trimmed);
 
         let admin_password = cli
             .admin_password
@@ -144,7 +145,8 @@ impl Settings {
                     .bootstrap_admin
                     .as_ref()
                     .and_then(|admin| admin.password.clone())
-            });
+            })
+            .and_then(non_empty_trimmed);
 
         let frontend_dist_path = cli
             .frontend_dist_path
@@ -380,7 +382,7 @@ mod tests {
     }
 
     #[test]
-    fn source_precedence_is_cli_then_env_then_file_then_default() {
+    fn cli_env_file_precedence_is_applied_per_setting() {
         let cli = Cli {
             host: Some("0.0.0.0".to_owned()),
             port: Some("9090".to_owned()),
@@ -391,8 +393,8 @@ mod tests {
         };
         let file = ConfigFile {
             server: Some(FileServerSettings {
-                host: Some("127.0.0.1".to_owned()),
-                port: Some("8080".to_owned()),
+                host: Some("192.168.1.10".to_owned()),
+                port: Some("3000".to_owned()),
             }),
             database: Some(FileDatabaseSettings {
                 path: Some("./data/from-file.sqlite".to_owned()),

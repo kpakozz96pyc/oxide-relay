@@ -19,6 +19,15 @@ OXIDERELAY_ADMIN_PASSWORD
 
 If at least one user already exists, the service starts without those variables.
 
+`.env.example` ships these two variables commented out/empty on purpose — an
+empty or unset value is treated as not configured, not as a real credential.
+If the database is empty and either variable is missing or empty, startup
+fails immediately with an actionable error naming both variables. The email
+is trimmed, validated, and lowercased before it is stored; the password goes
+through the same validation as regular user creation and the placeholder
+value `change-me` is explicitly rejected. Once the initial administrator has
+been created, both variables can be removed from `.env`.
+
 ## Offline Password Recovery
 
 If no administrator can sign in, the backend binary can generate a one-time
@@ -240,3 +249,12 @@ For an existing environment:
 2. Omit bootstrap admin variables.
 3. Confirm startup succeeds without bootstrap errors.
 4. Confirm an existing user can still authenticate.
+
+For a fresh environment with missing or rejected credentials (each must fail
+startup with an actionable error, not a silently-created admin):
+
+1. Start with an empty writable data directory and no bootstrap admin
+   variables set.
+2. Start with `OXIDERELAY_ADMIN_EMAIL`/`OXIDERELAY_ADMIN_PASSWORD` set to
+   empty strings.
+3. Start with `OXIDERELAY_ADMIN_PASSWORD=change-me`.

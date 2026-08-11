@@ -497,6 +497,7 @@ Use the published container image with the provided Compose configuration:
 
 ```bash
 cp .env.example .env
+# edit .env and set initial administrator credentials
 docker compose up -d
 ```
 
@@ -531,8 +532,13 @@ OXIDERELAY_ADMIN_EMAIL
 OXIDERELAY_ADMIN_PASSWORD
 ```
 
-These settings are required only for the first successful startup with an empty
-`users` table.
+Set real values for both in `.env` before the first startup — `.env.example`
+ships them commented out/empty on purpose, and the well-known placeholder
+password `change-me` is rejected. The email is normalized to lowercase and
+validated, and the password goes through the same validation as regular user
+creation. These settings are required only for the first successful startup
+with an empty `users` table; once the initial administrator has been created,
+you can delete both variables from `.env`.
 
 ### 7. Restart With an Existing Database
 
@@ -655,6 +661,7 @@ The recommended install path is Docker Compose:
 
 ```bash
 cp .env.example .env
+# edit .env and set initial administrator credentials
 docker compose up -d
 ```
 

@@ -11,8 +11,8 @@ COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-oxiderelay-smoke}"
 export COMPOSE_PROJECT_NAME
 export OXIDERELAY_IMAGE="${OXIDERELAY_IMAGE:-oxiderelay:smoke}"
 export OXIDERELAY_PUBLISHED_PORT="${OXIDERELAY_PUBLISHED_PORT:-18080}"
-export OXIDERELAY_ADMIN_EMAIL="${OXIDERELAY_ADMIN_EMAIL:-admin@example.com}"
-export OXIDERELAY_ADMIN_PASSWORD="${OXIDERELAY_ADMIN_PASSWORD:-change-me}"
+export OXIDERELAY_ADMIN_EMAIL="${OXIDERELAY_ADMIN_EMAIL:-smoke-admin@example.com}"
+export OXIDERELAY_ADMIN_PASSWORD="${OXIDERELAY_ADMIN_PASSWORD:-smoke-admin-password}"
 
 BASE_URL="http://127.0.0.1:${OXIDERELAY_PUBLISHED_PORT}"
 PROJECT_NAME="${PROJECT_NAME:-Smoke Project}"
@@ -43,6 +43,22 @@ prepare_runtime_env_file() {
   fi
 
   cp "${EXAMPLE_ENV_FILE}" "${RUNTIME_ENV_FILE}"
+python3 - "${RUNTIME_ENV_FILE}" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+content = path.read_text(encoding="utf-8")
+content = content.replace(
+    "OXIDERELAY_ADMIN_EMAIL=\n",
+    f"OXIDERELAY_ADMIN_EMAIL={__import__('os').environ['OXIDERELAY_ADMIN_EMAIL']}\n",
+)
+content = content.replace(
+    "OXIDERELAY_ADMIN_PASSWORD=\n",
+    f"OXIDERELAY_ADMIN_PASSWORD={__import__('os').environ['OXIDERELAY_ADMIN_PASSWORD']}\n",
+)
+path.write_text(content, encoding="utf-8")
+PY
   RUNTIME_ENV_PREPARED=1
 }
 

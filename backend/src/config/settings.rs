@@ -521,6 +521,22 @@ mod tests {
     }
 
     #[test]
+    fn empty_admin_environment_variables_are_treated_as_unconfigured() {
+        let env = BTreeMap::from([
+            ("OXIDERELAY_ADMIN_EMAIL".to_owned(), "".to_owned()),
+            ("OXIDERELAY_ADMIN_PASSWORD".to_owned(), "   ".to_owned()),
+        ]);
+        let settings = Settings::from_sources(cli_defaults(), ConfigFile::default(), |key| {
+            env.get(key).cloned()
+        })
+        .expect("settings");
+
+        assert!(settings.bootstrap_admin.email.is_none());
+        assert!(settings.bootstrap_admin.password.is_none());
+        assert!(!settings.bootstrap_admin.is_configured());
+    }
+
+    #[test]
     fn password_reset_link_subcommand_accepts_email() {
         let cli = Cli::try_parse_from([
             "oxiderelay-backend",

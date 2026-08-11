@@ -179,7 +179,6 @@ pub async fn locale_bundle(
     let environment_slug = required_non_empty(&query.environment, "Environment is required.")?;
     let rows = load_locale_rows(&state, &project_slug, environment_slug, &language_code).await?;
     let version = build_locale_bundle_version(&rows);
-    let etag = wrap_etag(&version);
 
     let values = rows
         .into_iter()
@@ -190,11 +189,11 @@ pub async fn locale_bundle(
         project: project_slug,
         locale: language_code,
         environment: environment_slug.to_owned(),
-        version,
+        version: version.clone(),
         values,
     };
 
-    respond_with_json_cache(&request_headers, query.v.as_deref(), &etag, response)
+    respond_with_json_cache(&request_headers, query.v.as_deref(), &version, response)
 }
 
 #[utoipa::path(
@@ -222,10 +221,10 @@ pub async fn delivery_manifest(
     let environment_slug = required_non_empty(&query.environment, "Environment is required.")?;
     let rows = load_locale_rows(&state, &project_slug, environment_slug, &language_code).await?;
     let locale_bundle_version = build_locale_bundle_version(&rows);
-    let etag = wrap_etag(&build_manifest_version(
+    let manifest_version = build_manifest_version(
         &locale_bundle_version,
         rows.iter().map(|row| row.namespace.as_str()),
-    ));
+    );
 
     let mut namespaces = BTreeMap::<String, Vec<LocaleBundleRow>>::new();
     for row in rows {
@@ -235,7 +234,7 @@ pub async fn delivery_manifest(
     let namespace_files = namespaces
         .into_iter()
         .map(|(namespace, rows)| {
-            let version = build_locale_bundle_version(&rows);
+            let version = build_namespace_version_from_locale_rows(&rows);
             DeliveryManifestNamespace {
                 name: namespace.clone(),
                 version: version.clone(),
@@ -264,7 +263,7 @@ pub async fn delivery_manifest(
         namespaces: namespace_files,
     };
 
-    respond_with_json_cache(&request_headers, None, &etag, response)
+    respond_with_json_cache(&request_headers, None, &manifest_version, response)
 }
 
 #[utoipa::path(
@@ -323,11 +322,10 @@ pub async fn static_namespace_file(
     .map_err(|error| ApiError::from_sqlx(error, "Unable to load static namespace file."))?;
 
     let version = build_namespace_version(&rows);
-    let etag = wrap_etag(&version);
     let values: BTreeMap<String, String> =
         rows.into_iter().map(|row| (row.key, row.value)).collect();
 
-    respond_with_json_cache(&request_headers, query.v.as_deref(), &etag, values)
+    respond_with_json_cache(&request_headers, query.v.as_deref(), &version, values)
 }
 
 async fn load_locale_rows(
@@ -397,9 +395,18 @@ async fn load_environment_version_rows(
 fn respond_with_json_cache<T: Serialize>(
     request_headers: &HeaderMap,
     requested_version: Option<&str>,
-    etag: &str,
+    version: &str,
     payload: T,
 ) -> AppResult<Response> {
+    if let Some(requested) = requested_version
+        && requested != version
+    {
+        return Err(ApiError::not_found(
+            "The requested delivery version is no longer current.",
+        ));
+    }
+
+    let etag = wrap_etag(version);
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         CACHE_CONTROL,
@@ -411,11 +418,11 @@ fn respond_with_json_cache<T: Serialize>(
     );
     response_headers.insert(
         ETAG,
-        HeaderValue::from_str(etag)
+        HeaderValue::from_str(&etag)
             .map_err(|_| ApiError::internal("Unable to serialize delivery ETag."))?,
     );
 
-    if matches_if_none_match(request_headers, etag) {
+    if matches_if_none_match(request_headers, &etag) {
         return Ok((StatusCode::NOT_MODIFIED, response_headers).into_response());
     }
 
@@ -450,6 +457,20 @@ fn build_locale_bundle_version(rows: &[LocaleBundleRow]) -> String {
 }
 
 fn build_namespace_version(rows: &[StaticNamespaceRow]) -> String {
+    build_version_token(rows.iter().flat_map(|row| {
+        [
+            row.key.as_str(),
+            row.value.as_str(),
+            row.updated_at.as_str(),
+            row.key_updated_at.as_str(),
+        ]
+    }))
+}
+
+/// Must stay in lockstep with `build_namespace_version`: the manifest embeds
+/// this value in each namespace's versioned static URL, and `static_namespace_file`
+/// must derive the identical version for that URL's `v` to validate.
+fn build_namespace_version_from_locale_rows(rows: &[LocaleBundleRow]) -> String {
     build_version_token(rows.iter().flat_map(|row| {
         [
             row.key.as_str(),

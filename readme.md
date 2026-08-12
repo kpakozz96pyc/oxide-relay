@@ -585,7 +585,12 @@ The key stored in the database does not include the namespace prefix.
 Locale bundle responses include a `version` field and support `ETag` / `If-None-Match`.
 When using a versioned URL such as
 `/api/v1/projects/hr-portal/locales/ru?environment=production&v=<version>`,
-the response is cacheable as immutable content.
+the server verifies that `<version>` matches the version of the content it is
+about to return. Only then is the response cacheable as immutable content. A
+`v` that does not match the current version (stale after a translation
+change, or simply invalid) is rejected with `404 Not Found` rather than being
+served — an outdated or forged versioned URL can never be cached as
+immutable.
 
 ---
 
@@ -622,7 +627,9 @@ Response:
 ```
 
 Static JSON returns one namespace per file, so response keys are not namespace-prefixed.
-Versioned static URLs use long-lived immutable browser caching.
+Versioned static URLs use long-lived immutable browser caching, but only when
+`v` matches the namespace file's current version; a mismatched `v` returns
+`404 Not Found` instead of immutable-cached content.
 Unversioned static URLs still work and use short TTL plus revalidation headers.
 
 ---

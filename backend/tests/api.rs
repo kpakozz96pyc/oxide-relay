@@ -726,6 +726,324 @@ async fn public_delivery_endpoints_return_expected_payloads() {
 }
 
 #[tokio::test]
+async fn delivery_urls_reject_a_version_that_does_not_match_the_current_content() {
+    let harness = TestHarness::new().await;
+    let owner_id = harness
+        .insert_user(
+            "version-owner@example.com",
+            "version-password",
+            "Version Owner",
+            true,
+        )
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Version Project", "version-project")
+        .await;
+    harness.add_project_access(&owner_id, &project_id).await;
+    let namespace_id = harness.insert_namespace(&project_id, "common").await;
+    let language_id = harness.insert_language(&project_id, "en", "English").await;
+    let environment_id = harness
+        .insert_environment(&project_id, "Production", "production")
+        .await;
+    let key_id = harness
+        .insert_translation_key(&project_id, &namespace_id, "greeting")
+        .await;
+    harness
+        .insert_translation_value(&key_id, &language_id, &environment_id, "Hello")
+        .await;
+
+    let manifest_response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/version-project/delivery-manifest/en?environment=production")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(manifest_response.status(), StatusCode::OK);
+    let manifest_body = json_body(manifest_response).await;
+    let locale_bundle_url = manifest_body["locale_bundle_url"]
+        .as_str()
+        .expect("locale bundle url")
+        .to_owned();
+    let namespace_url = manifest_body["namespaces"][0]["url"]
+        .as_str()
+        .expect("namespace url")
+        .to_owned();
+
+    // 1. locale bundle without v => short cache, not immutable.
+    let locale_no_v = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/version-project/locales/en?environment=production")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(locale_no_v.status(), StatusCode::OK);
+    assert_eq!(
+        locale_no_v
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("cache-control"),
+        "public, max-age=300, must-revalidate"
+    );
+
+    // 2. locale bundle with the correct v (from the manifest) => immutable.
+    let locale_correct_v = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(locale_bundle_url.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(locale_correct_v.status(), StatusCode::OK);
+    assert_eq!(
+        locale_correct_v
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("cache-control"),
+        "public, max-age=31536000, immutable"
+    );
+
+    // 3. locale bundle with a wrong v => rejected, never immutable.
+    let locale_wrong_v = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(
+                    "/api/v1/projects/version-project/locales/en?environment=production&v=not-the-real-version",
+                )
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(locale_wrong_v.status(), StatusCode::NOT_FOUND);
+    assert!(locale_wrong_v.headers().get(header::CACHE_CONTROL).is_none());
+
+    // 4. static JSON without v => short cache, not immutable.
+    let static_no_v = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/static/version-project/production/en/common.json")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(static_no_v.status(), StatusCode::OK);
+    assert_eq!(
+        static_no_v
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("cache-control"),
+        "public, max-age=300, must-revalidate"
+    );
+
+    // 5. static JSON with the correct v (from the manifest) => immutable.
+    let static_correct_v = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(namespace_url.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(static_correct_v.status(), StatusCode::OK);
+    assert_eq!(
+        static_correct_v
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("cache-control"),
+        "public, max-age=31536000, immutable"
+    );
+
+    // 6. static JSON with a wrong v => rejected, never immutable.
+    let static_wrong_v = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/static/version-project/production/en/common.json?v=not-the-real-version")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(static_wrong_v.status(), StatusCode::NOT_FOUND);
+    assert!(static_wrong_v.headers().get(header::CACHE_CONTROL).is_none());
+
+    // 7. correct v plus a matching If-None-Match still returns 304.
+    let etag = static_correct_v
+        .headers()
+        .get(header::ETAG)
+        .expect("etag")
+        .to_str()
+        .expect("etag header")
+        .to_owned();
+    let static_not_modified = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(namespace_url.as_str())
+                .header(header::IF_NONE_MATCH, etag)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(static_not_modified.status(), StatusCode::NOT_MODIFIED);
+
+    // 9. once the content changes, the previously valid versioned URLs stop validating.
+    let owner_cookie = harness
+        .login("version-owner@example.com", "version-password")
+        .await;
+    let create_translation = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/version-project/translations")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "environment": "production",
+                        "language": "en",
+                        "namespace": "common",
+                        "key": "farewell",
+                        "value": "Goodbye"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(create_translation.status(), StatusCode::CREATED);
+
+    let stale_locale_bundle = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(locale_bundle_url.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(
+        stale_locale_bundle.status(),
+        StatusCode::NOT_FOUND,
+        "a versioned locale bundle URL must stop validating once the underlying content changes"
+    );
+
+    let stale_static = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(namespace_url.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(
+        stale_static.status(),
+        StatusCode::NOT_FOUND,
+        "a versioned static URL must stop validating once the underlying content changes"
+    );
+}
+
+#[tokio::test]
+async fn versioned_delivery_url_honors_the_configured_bearer_token() {
+    let harness = TestHarness::new_with_delivery(DeliverySettings {
+        public_enabled: true,
+        token: Some("delivery-secret".to_owned()),
+    })
+    .await;
+    let owner_id = harness
+        .insert_user("token-owner@example.com", "token-password", "Token Owner", true)
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Token Project", "token-project")
+        .await;
+    harness.add_project_access(&owner_id, &project_id).await;
+    let namespace_id = harness.insert_namespace(&project_id, "common").await;
+    let language_id = harness.insert_language(&project_id, "en", "English").await;
+    let environment_id = harness
+        .insert_environment(&project_id, "Production", "production")
+        .await;
+    let key_id = harness
+        .insert_translation_key(&project_id, &namespace_id, "greeting")
+        .await;
+    harness
+        .insert_translation_value(&key_id, &language_id, &environment_id, "Hello")
+        .await;
+
+    let manifest_response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/token-project/delivery-manifest/en?environment=production")
+                .header(header::AUTHORIZATION, "Bearer delivery-secret")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(manifest_response.status(), StatusCode::OK);
+    let manifest_body = json_body(manifest_response).await;
+    let namespace_url = manifest_body["namespaces"][0]["url"]
+        .as_str()
+        .expect("namespace url")
+        .to_owned();
+
+    let unauthorized = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(namespace_url.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let authorized = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(namespace_url.as_str())
+                .header(header::AUTHORIZATION, "Bearer delivery-secret")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(authorized.status(), StatusCode::OK);
+    assert_eq!(
+        authorized
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("cache-control"),
+        "private, max-age=31536000, immutable"
+    );
+    assert_eq!(
+        authorized.headers().get(header::VARY),
+        Some(&header::HeaderValue::from_static("Authorization"))
+    );
+
+    let wrong_v_with_token = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/static/token-project/production/en/common.json?v=not-the-real-version")
+                .header(header::AUTHORIZATION, "Bearer delivery-secret")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(wrong_v_with_token.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn disabled_delivery_endpoints_return_not_found_without_breaking_admin_api() {
     let harness = TestHarness::new_with_delivery(DeliverySettings {
         public_enabled: false,

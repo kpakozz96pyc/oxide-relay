@@ -9,6 +9,36 @@ permissions:
   contents: read
 
 jobs:
+  build-native-artifact:
+    name: Build native release artifact
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.91.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Package Linux native release
+        id: package
+        run: |
+          bash scripts/package-native-release.sh "${GITHUB_REF_NAME}"
+          echo "artifact_path=$(find dist -maxdepth 1 -type f -name '*.tar.gz' -print -quit)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload native release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-release-${{ github.ref_name }}-linux-x86_64
+          path: ${{ steps.package.outputs.artifact_path }}
+          if-no-files-found: error
+
   build-and-push:
     name: Build and push release image
     runs-on: ubuntu-latest

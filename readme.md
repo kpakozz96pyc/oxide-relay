@@ -450,111 +450,101 @@ npm install
 npm run dev
 ```
 
-Use this mode when changing frontend or backend code. The Vite development server
-proxies `/api` and `/static` to the backend.
+This mode is recommended when actively developing frontend or backend features.
 
-To populate the admin UI with sample data for screenshots or manual testing,
-seed a demo project after the bootstrap admin has signed in at least once:
+### 2. Production-like Local Mode
 
-```bash
-cargo run -p oxiderelay-backend -- --config backend/config.toml.example demo-seed --owner-email admin@example.com
-```
-
-This is a **development-only** command — see [Demo Seed](deploy/OPERATIONS.md#demo-seed-development-only)
-in the operations runbook. Never run it against a production database.
-
-### 2. Production-Style Local Mode
-
-Build the frontend first, then let the backend serve both the UI and API:
+Build the frontend once, then run the backend so it serves the compiled UI:
 
 ```bash
 cd frontend
 npm install
 npm run build
 cd ..
-
 cargo run -p oxiderelay-backend -- --config backend/config.toml.example
 ```
 
-Use this mode to validate behavior close to production without Docker.
+Use this mode to verify routing, static asset serving, and the integrated app
+without containers.
 
 ### 3. Native Binary Mode
 
-Build and run the release binary directly:
+Build a release binary and run it directly:
 
 ```bash
-cd frontend && npm run build && cd ..
 cargo build --release -p oxiderelay-backend
-./target/release/oxiderelay-backend
+./target/release/oxiderelay-backend --config backend/config.toml
 ```
 
-By default, the backend looks for the frontend bundle in `./frontend/dist`.
-Override this path with `OXIDERELAY_FRONTEND_DIST_PATH` if needed.
+Use this when installing without Docker.
 
 ### 4. Docker Compose Mode
 
-Use the published container image with the provided Compose configuration:
+Start OxideRelay using the repository's Compose setup:
 
 ```bash
 cp .env.example .env
-# edit .env and set initial administrator credentials
 docker compose up -d
 ```
 
-Use this mode for the simplest installation path. Configuration comes from `.env`,
-and SQLite data is stored in the `oxiderelay-data` volume.
-If port `8080` is already busy on the host, change `OXIDERELAY_PUBLISHED_PORT`
-in `.env` without changing the in-container application port.
+This is the recommended self-hosted installation path.
 
 ### 5. Docker From Source Mode
 
-Build a local image from the current repository checkout:
+Build the image locally and run it yourself:
 
 ```bash
-docker build -f deploy/Dockerfile -t oxiderelay:latest .
-docker run -d \
-  --name oxiderelay \
-  --env-file .env \
-  -p 8080:8080 \
-  -v oxiderelay-data:/data \
-  oxiderelay:latest
+docker build -t oxiderelay:local .
+docker run --rm -p 8080:8080 \
+  -v "$(pwd)/data:/var/lib/oxiderelay" \
+  oxiderelay:local
 ```
 
-Use this mode when you want the container to run your local source changes rather
-than a published registry image.
-
-### 6. First Start With an Empty Database
-
-When the database is empty, the service requires bootstrap administrator credentials:
-
-```text
-OXIDERELAY_ADMIN_EMAIL
-OXIDERELAY_ADMIN_PASSWORD
-```
-
-Set real values for both in `.env` before the first startup — `.env.example`
-ships them commented out/empty on purpose, and the well-known placeholder
-password `change-me` is rejected. The email is normalized to lowercase and
-validated, and the password goes through the same validation as regular user
-creation. These settings are required only for the first successful startup
-with an empty `users` table; once the initial administrator has been created,
-you can delete both variables from `.env`.
-
-### 7. Restart With an Existing Database
-
-When the SQLite database already contains users, the service starts without
-bootstrap admin variables. In that mode, preserving the `/data` volume or the
-SQLite files is the important part.
+Use this mode when testing container changes before publishing an image.
 
 ---
 
-# Operations
+# API Overview
 
-Operational runbook details live in [deploy/OPERATIONS.md](deploy/OPERATIONS.md).
+OxideRelay exposes management APIs for the admin UI and delivery APIs for client applications.
 
-Admin API endpoints use cookie-based session authentication.
+## Management API
 
-Example:
+Used by the admin UI for authenticated administration tasks.
+
+Examples:
+
+```http
+POST /api/v1/auth/login
+GET  /api/v1/projects
+POST /api/v1/projects
+GET  /api/v1/projects/{project}/translations
+PUT  /api/v1/projects/{project}/translations/{key}
+```
+
+## Delivery Metadata
+
+Clients can fetch lightweight metadata about published translation content:
+
+```http
+GET /api/v1/projects/hr-portal/delivery-metadata?environment=production
+```
+
+Response:
+
+```json
+{
+  "project": "hr-portal",
+  "environment": "production",
+  "languages": ["en", "ru"],
+  "namespaces": ["common", "validation"],
+  "version": "2026-01-01T00:00:00Z"
+}
+```
+
+## REST Locale Delivery
+
+Backend services can fetch one locale as a single namespace-prefixed JSON object:
 
 ```http
 GET /api/v1/projects/hr-portal/locales/ru?environment=production
@@ -735,3 +725,9 @@ Alternative installation and launch options are documented above in `Run Modes`.
 * Environment Promotion
 * Translation Rollback
 * OpenAPI Client Generation
+
+---
+
+# License
+
+OxideRelay is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

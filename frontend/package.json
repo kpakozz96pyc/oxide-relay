@@ -2,6 +2,7 @@
   "name": "oxiderelay-frontend",
   "private": true,
   "version": "0.0.9",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

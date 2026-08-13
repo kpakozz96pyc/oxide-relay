@@ -465,7 +465,7 @@ npm run build
 ```bash
 cargo run -p oxiderelay-backend -- \
   --config backend/config.toml.example \
-  --frontend-dist frontend/dist
+  --frontend-dist-path frontend/dist
 ```
 
 Use this to verify the packaged UI locally without Docker.
@@ -485,7 +485,7 @@ cd ..
 cargo build --release -p oxiderelay-backend
 ./target/release/oxiderelay-backend \
   --config backend/config.toml.example \
-  --frontend-dist frontend/dist
+  --frontend-dist-path frontend/dist
 ```
 
 This mode is useful when you want a native process instead of a container.
@@ -676,11 +676,16 @@ From the extracted archive root:
 
 ```bash
 cp backend/config.toml.example config.toml
+mkdir -p data
+# Replace the bootstrap_admin email and password in config.toml.
+# The example password "change-me" is intentionally rejected.
 ./oxiderelay-backend --config config.toml
 ```
 
 Run the binary from the archive root so `./frontend/dist` and
-`./data/oxiderelay.sqlite` resolve correctly.
+`./data/oxiderelay.sqlite` resolve correctly. After the first successful start,
+remove the bootstrap credentials from `config.toml`; they are needed only while
+creating the initial administrator in an empty database.
 
 The container serves both the admin UI at `/` and the API at `/api`.
 Alternative installation and launch options are documented above in `Run Modes`.

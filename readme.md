@@ -450,101 +450,93 @@ npm install
 npm run dev
 ```
 
-This mode is recommended when actively developing frontend or backend features.
+Use this for active frontend or backend development.
 
-### 2. Production-like Local Mode
+### 2. Production-Style Local Mode
 
-Build the frontend once, then run the backend so it serves the compiled UI:
+Build the frontend once, then run only the backend:
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+```bash
+cargo run -p oxiderelay-backend -- \
+  --config backend/config.toml.example \
+  --frontend-dist frontend/dist
+```
+
+Use this to verify the packaged UI locally without Docker.
+
+### 3. Native Binary
+
+Build the frontend first, then compile and run the backend binary:
 
 ```bash
 cd frontend
 npm install
 npm run build
 cd ..
-cargo run -p oxiderelay-backend -- --config backend/config.toml.example
 ```
-
-Use this mode to verify routing, static asset serving, and the integrated app
-without containers.
-
-### 3. Native Binary Mode
-
-Build a release binary and run it directly:
 
 ```bash
 cargo build --release -p oxiderelay-backend
-./target/release/oxiderelay-backend --config backend/config.toml
+./target/release/oxiderelay-backend \
+  --config backend/config.toml.example \
+  --frontend-dist frontend/dist
 ```
 
-Use this when installing without Docker.
+This mode is useful when you want a native process instead of a container.
+For release-built Linux archives, see `Deployment` below.
 
-### 4. Docker Compose Mode
+### 4. Docker Compose
 
-Start OxideRelay using the repository's Compose setup:
+The recommended installation path:
 
 ```bash
 cp .env.example .env
+# edit .env and set initial administrator credentials
 docker compose up -d
 ```
 
-This is the recommended self-hosted installation path.
+This uses the published image and persists SQLite in a Docker volume.
 
-### 5. Docker From Source Mode
+### 5. Docker From Source
 
-Build the image locally and run it yourself:
+If you want to build the image locally:
 
 ```bash
 docker build -t oxiderelay:local .
 docker run --rm -p 8080:8080 \
-  -v "$(pwd)/data:/var/lib/oxiderelay" \
+  -e OXIDERELAY_ADMIN_EMAIL=admin@example.com \
+  -e OXIDERELAY_ADMIN_PASSWORD=change-me \
   oxiderelay:local
 ```
 
-Use this mode when testing container changes before publishing an image.
+Use this if you need a custom local image build.
 
 ---
 
 # API Overview
 
-OxideRelay exposes management APIs for the admin UI and delivery APIs for client applications.
+OxideRelay exposes two delivery styles:
 
-## Management API
+* REST locale bundle delivery for backend and service clients
+* Static JSON file delivery for frontend clients
 
-Used by the admin UI for authenticated administration tasks.
+---
 
-Examples:
+# REST Locale Delivery
 
-```http
-POST /api/v1/auth/login
-GET  /api/v1/projects
-POST /api/v1/projects
-GET  /api/v1/projects/{project}/translations
-PUT  /api/v1/projects/{project}/translations/{key}
-```
-
-## Delivery Metadata
-
-Clients can fetch lightweight metadata about published translation content:
+Recommended endpoint:
 
 ```http
-GET /api/v1/projects/hr-portal/delivery-metadata?environment=production
+GET /api/v1/projects/{project}/locales/{locale}?environment=production
 ```
 
-Response:
-
-```json
-{
-  "project": "hr-portal",
-  "environment": "production",
-  "languages": ["en", "ru"],
-  "namespaces": ["common", "validation"],
-  "version": "2026-01-01T00:00:00Z"
-}
-```
-
-## REST Locale Delivery
-
-Backend services can fetch one locale as a single namespace-prefixed JSON object:
+Example:
 
 ```http
 GET /api/v1/projects/hr-portal/locales/ru?environment=production
@@ -554,10 +546,8 @@ Response:
 
 ```json
 {
-  "project": "hr-portal",
-  "locale": "ru",
-  "environment": "production",
-  "values": {
+  "version": "2025-08-03T09:31:14.431Z",
+  "translations": {
     "common.button.save": "Сохранить",
     "common.button.cancel": "Отмена"
   }
@@ -670,6 +660,27 @@ Every push of a `vX.Y.Z` git tag publishes a matching `kpakozz96pyc/oxiderelay:v
 image (stable releases also update `:latest`). For predictable, repeatable
 upgrades, pin `OXIDERELAY_IMAGE` in `.env` to that release tag instead of
 `:latest`, since `:latest` can change under you between deploys.
+
+### Native Linux archive
+
+Each `vX.Y.Z` release tag also publishes a native Linux archive. End users do
+not need Node.js to run it.
+
+The archive contains:
+
+* `./oxiderelay-backend`
+* `./frontend/dist`
+* `./backend/config.toml.example`
+
+From the extracted archive root:
+
+```bash
+cp backend/config.toml.example config.toml
+./oxiderelay-backend --config config.toml
+```
+
+Run the binary from the archive root so `./frontend/dist` and
+`./data/oxiderelay.sqlite` resolve correctly.
 
 The container serves both the admin UI at `/` and the API at `/api`.
 Alternative installation and launch options are documented above in `Run Modes`.

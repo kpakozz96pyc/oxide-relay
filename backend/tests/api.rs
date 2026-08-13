@@ -15,6 +15,10 @@ use oxiderelay_backend::{
         ServerSettings, SessionSettings, Settings,
     },
     db, http,
+    translation_validation::{
+        MAX_TRANSLATION_DESCRIPTION_LEN, MAX_TRANSLATION_IMPORT_ENTRIES,
+        MAX_TRANSLATION_KEY_LEN, MAX_TRANSLATION_VALUE_LEN,
+    },
 };
 use rand_core::OsRng;
 use serde_json::{Value, json};
@@ -261,6 +265,21 @@ async fn openapi_document_matches_the_registered_api_surface() {
     }
 
     assert!(document["components"]["schemas"]["HealthResponse"].is_object());
+    assert_eq!(
+        document["components"]["schemas"]["CreateTranslationRequest"]["properties"]["key"]
+            ["maxLength"],
+        MAX_TRANSLATION_KEY_LEN
+    );
+    assert_eq!(
+        document["components"]["schemas"]["CreateTranslationRequest"]["properties"]["value"]
+            ["maxLength"],
+        MAX_TRANSLATION_VALUE_LEN
+    );
+    assert_eq!(
+        document["components"]["schemas"]["UpdateTranslationRequest"]["properties"]["description"]
+            ["maxLength"],
+        MAX_TRANSLATION_DESCRIPTION_LEN
+    );
     assert_eq!(
         document["components"]["securitySchemes"]["delivery_bearer"]["type"],
         "http"
@@ -2410,6 +2429,242 @@ async fn translation_crud_import_export_and_environment_acl_work() {
 }
 
 #[tokio::test]
+async fn translation_create_and_update_apply_the_same_validation_limits() {
+    let (harness, owner_cookie, _) = translation_validation_setup().await;
+    let create_path = "/api/v1/projects/validation-project/translations";
+    let base_create = json!({
+        "environment": "production",
+        "language": "en",
+        "namespace": "common",
+        "key": "button.save",
+        "value": "Save",
+        "description": "Save button"
+    });
+
+    let invalid_create_cases = [
+        (
+            json!({ "key": "   " }),
+            "Translation key cannot be empty.",
+        ),
+        (
+            json!({ "key": "k".repeat(MAX_TRANSLATION_KEY_LEN + 1) }),
+            "must be at most 500 characters",
+        ),
+        (
+            json!({ "value": "   " }),
+            "cannot be empty",
+        ),
+        (
+            json!({ "value": "v".repeat(MAX_TRANSLATION_VALUE_LEN + 1) }),
+            "must be at most 10000 characters",
+        ),
+        (
+            json!({ "description": "d".repeat(MAX_TRANSLATION_DESCRIPTION_LEN + 1) }),
+            "Description must be at most 2000 characters",
+        ),
+        (
+            json!({ "key": "common.button.save" }),
+            "must not include the namespace prefix",
+        ),
+        (
+            json!({ "key": "button{save}" }),
+            "contains unsupported characters",
+        ),
+    ];
+
+    for (overrides, expected_message) in invalid_create_cases {
+        let mut payload = base_create.clone();
+        payload
+            .as_object_mut()
+            .expect("create object")
+            .extend(overrides.as_object().expect("override object").clone());
+        let response = json_request(&harness, "POST", create_path, &owner_cookie, payload).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .expect("validation message")
+                .contains(expected_message),
+            "{body}"
+        );
+    }
+
+    let mut valid_create = base_create;
+    valid_create["description"] = json!("   ");
+    let response = json_request(
+        &harness,
+        "POST",
+        create_path,
+        &owner_cookie,
+        valid_create,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let created = json_body(response).await;
+    assert!(created["description"].is_null());
+    let translation_id = created["id"].as_str().expect("translation id");
+    let update_path = format!(
+        "/api/v1/projects/validation-project/translations/{translation_id}"
+    );
+
+    for (payload, expected_message) in [
+        (
+            json!({ "value": "   " }),
+            "Translation value cannot be empty",
+        ),
+        (
+            json!({ "value": "v".repeat(MAX_TRANSLATION_VALUE_LEN + 1) }),
+            "must be at most 10000 characters",
+        ),
+        (
+            json!({ "description": "d".repeat(MAX_TRANSLATION_DESCRIPTION_LEN + 1) }),
+            "Description must be at most 2000 characters",
+        ),
+    ] {
+        let response =
+            json_request(&harness, "PUT", &update_path, &owner_cookie, payload).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .expect("validation message")
+                .contains(expected_message),
+            "{body}"
+        );
+    }
+
+    let response = json_request(
+        &harness,
+        "PUT",
+        &update_path,
+        &owner_cookie,
+        json!({ "value": "  Save now  ", "description": "   " }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let updated = json_body(response).await;
+    assert_eq!(updated["value"], "Save now");
+    assert!(updated["description"].is_null());
+}
+
+#[tokio::test]
+async fn translation_import_is_atomic_upserts_and_enforces_batch_limits() {
+    let (harness, owner_cookie, project_id) = translation_validation_setup().await;
+    let import_path = "/api/v1/projects/validation-project/imports/json";
+
+    let response = import_request(
+        &harness,
+        import_path,
+        &owner_cookie,
+        json!({ "button.save": "Save" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(json_body(response).await["imported"], 1);
+
+    let response = import_request(
+        &harness,
+        import_path,
+        &owner_cookie,
+        json!({
+            "button.save": "Save again",
+            "button.cancel": "Cancel"
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(json_body(response).await["imported"], 2);
+    assert_eq!(translation_value_count(&harness.pool, &project_id).await, 2);
+
+    let invalid_batches = [
+        (
+            json!({ "valid.atomic": "Valid", "": "Empty key" }),
+            "Translation key cannot be empty",
+        ),
+        (
+            json!({
+                "valid.atomic": "Valid",
+                "k".repeat(MAX_TRANSLATION_KEY_LEN + 1): "Too long"
+            }),
+            "must be at most 500 characters",
+        ),
+        (
+            json!({
+                "valid.atomic": "Valid",
+                "too.long": "v".repeat(MAX_TRANSLATION_VALUE_LEN + 1)
+            }),
+            "must be at most 10000 characters",
+        ),
+        (
+            json!({ "valid.atomic": "Valid", "empty.value": "   " }),
+            "cannot be empty",
+        ),
+        (
+            json!({ "valid.atomic": "Valid", "common.prefixed": "Invalid" }),
+            "must not include the namespace prefix",
+        ),
+        (
+            json!({ "valid.atomic": "Valid", "button{save}": "Invalid" }),
+            "contains unsupported characters",
+        ),
+    ];
+
+    for (values, expected_message) in invalid_batches {
+        let before = translation_value_count(&harness.pool, &project_id).await;
+        let response = import_request(&harness, import_path, &owner_cookie, values).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .expect("validation message")
+                .contains(expected_message),
+            "{body}"
+        );
+        assert_eq!(
+            translation_value_count(&harness.pool, &project_id).await,
+            before,
+            "an invalid batch must not persist any entry"
+        );
+    }
+
+    let accepted_values = (0..MAX_TRANSLATION_IMPORT_ENTRIES)
+        .map(|index| (format!("bulk.key.{index}"), json!(format!("Value {index}"))))
+        .collect::<serde_json::Map<_, _>>();
+    let response = import_request(
+        &harness,
+        import_path,
+        &owner_cookie,
+        Value::Object(accepted_values),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await["imported"],
+        MAX_TRANSLATION_IMPORT_ENTRIES
+    );
+
+    let rejected_values = (0..=MAX_TRANSLATION_IMPORT_ENTRIES)
+        .map(|index| (format!("overflow.key.{index}"), json!("Value")))
+        .collect::<serde_json::Map<_, _>>();
+    let before = translation_value_count(&harness.pool, &project_id).await;
+    let response = import_request(
+        &harness,
+        import_path,
+        &owner_cookie,
+        Value::Object(rejected_values),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        translation_value_count(&harness.pool, &project_id).await,
+        before
+    );
+}
+
+#[tokio::test]
 async fn custom_environments_use_edit_all_and_production_uses_edit_prod() {
     let harness = TestHarness::new().await;
     let owner_id = harness
@@ -2812,6 +3067,73 @@ impl TestHarness {
         .expect("insert translation value");
         id
     }
+}
+
+async fn translation_validation_setup() -> (TestHarness, String, String) {
+    let harness = TestHarness::new().await;
+    let owner_id = harness
+        .insert_user(
+            "validation-owner@example.com",
+            "owner-password",
+            "Validation Owner",
+            true,
+        )
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Validation Project", "validation-project")
+        .await;
+    harness.add_project_access(&owner_id, &project_id).await;
+    harness.insert_namespace(&project_id, "common").await;
+    harness.insert_language(&project_id, "en", "English").await;
+    harness
+        .insert_environment(&project_id, "Production", "production")
+        .await;
+    let owner_cookie = harness
+        .login("validation-owner@example.com", "owner-password")
+        .await;
+
+    (harness, owner_cookie, project_id)
+}
+
+async fn json_request(
+    harness: &TestHarness,
+    method: &str,
+    path: &str,
+    cookie: &str,
+    payload: Value,
+) -> axum::response::Response {
+    harness
+        .request(
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, cookie)
+                .body(Body::from(payload.to_string()))
+                .expect("request"),
+        )
+        .await
+}
+
+async fn import_request(
+    harness: &TestHarness,
+    path: &str,
+    cookie: &str,
+    values: Value,
+) -> axum::response::Response {
+    json_request(
+        harness,
+        "POST",
+        path,
+        cookie,
+        json!({
+            "environment": "production",
+            "language": "en",
+            "namespace": "common",
+            "values": values
+        }),
+    )
+    .await
 }
 
 fn session_cookie(response: &axum::response::Response) -> String {

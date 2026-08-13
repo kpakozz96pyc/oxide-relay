@@ -11,6 +11,11 @@ import {
 } from "../../api";
 import { usePermissionSet } from "../../hooks/usePermissionSet";
 import { editEnvironmentPermission } from "../../lib/permissions";
+import {
+  MAX_TRANSLATION_IMPORT_ENTRIES,
+  validateTranslationKey,
+  validateTranslationValue,
+} from "../../lib/translationValidation";
 
 type ImportStage = "idle" | "uploading" | "processing" | "success";
 
@@ -70,7 +75,7 @@ export function ProjectImportPanel({
     }
   }, [namespace, namespaces]);
 
-  const importPreview = parseImportPreview(importJson);
+  const importPreview = parseImportPreview(importJson, namespace);
   const canImportTranslations =
     project.is_owner ||
     (permissionSet.has("ImportTranslations") && permissionSet.has(editEnvironmentPermission(environment)));
@@ -217,7 +222,7 @@ export function ProjectImportPanel({
           <header className="stack gap-sm">
             <h3>Import JSON</h3>
             <p className="panel-copy">
-              Paste a flat JSON object. Each property name becomes a translation key and each value must be a string.
+              Paste a flat JSON object. Keys are local to the selected namespace, and the whole batch is rejected if any entry is invalid.
             </p>
           </header>
 
@@ -351,7 +356,7 @@ export function ProjectImportPanel({
   );
 }
 
-export function parseImportPreview(rawJson: string): ImportPreview {
+export function parseImportPreview(rawJson: string, namespace = ""): ImportPreview {
   if (!rawJson.trim()) {
     return { status: "empty" };
   }
@@ -375,22 +380,27 @@ export function parseImportPreview(rawJson: string): ImportPreview {
   }
 
   const entries = Object.entries(parsed);
-  if (entries.length > 5000) {
+  if (entries.length > MAX_TRANSLATION_IMPORT_ENTRIES) {
     return {
       status: "invalid",
-      error: "Import JSON cannot contain more than 5000 translation keys.",
+      error: "Import JSON cannot contain more than " + MAX_TRANSLATION_IMPORT_ENTRIES + " translation keys.",
     };
   }
 
   for (const [key, value] of entries) {
-    if (!key.trim()) {
-      return { status: "invalid", error: "Every translation key must be a non-empty string." };
+    const keyError = validateTranslationKey(key, namespace);
+    if (keyError) {
+      return { status: "invalid", error: keyError };
     }
     if (typeof value !== "string") {
       return {
         status: "invalid",
         error: `The value for "${key}" must be a string. Numbers, objects, arrays, and null are not supported.`,
       };
+    }
+    const valueError = validateTranslationValue(value, key.trim());
+    if (valueError) {
+      return { status: "invalid", error: valueError };
     }
   }
 

@@ -59,6 +59,8 @@ const environments: Environment[] = [
 
 class MockXMLHttpRequest {
   static requests: MockXMLHttpRequest[] = [];
+  static responseStatus = 200;
+  static responseBody: unknown = { imported: 2 };
 
   upload = {
     onprogress: null as ((event: ProgressEvent) => void) | null,
@@ -91,8 +93,8 @@ class MockXMLHttpRequest {
         loaded: 100,
         total: 100,
       } as ProgressEvent);
-      this.status = 200;
-      this.responseText = JSON.stringify({ imported: 2 });
+      this.status = MockXMLHttpRequest.responseStatus;
+      this.responseText = JSON.stringify(MockXMLHttpRequest.responseBody);
       this.onload?.();
     });
   }
@@ -121,6 +123,8 @@ function renderPanel() {
 
 beforeEach(() => {
   MockXMLHttpRequest.requests = [];
+  MockXMLHttpRequest.responseStatus = 200;
+  MockXMLHttpRequest.responseBody = { imported: 2 };
   vi.stubGlobal("XMLHttpRequest", MockXMLHttpRequest);
 });
 
@@ -151,6 +155,32 @@ describe("import JSON validation", () => {
     expect(parseImportPreview('{"retry.count":3}')).toEqual({
       status: "invalid",
       error: 'The value for "retry.count" must be a string. Numbers, objects, arrays, and null are not supported.',
+    });
+  });
+
+  it("rejects keys and values that exceed backend limits", () => {
+    expect(parseImportPreview(JSON.stringify({ ["k".repeat(501)]: "value" }), "common")).toMatchObject({
+      status: "invalid",
+      error: expect.stringContaining("must be at most 500 characters"),
+    });
+    expect(parseImportPreview(JSON.stringify({ valid: "v".repeat(10_001) }), "common")).toEqual({
+      status: "invalid",
+      error: 'The value for "valid" must be at most 10000 characters.',
+    });
+  });
+
+  it("rejects namespace-prefixed, unsupported, and empty import entries", () => {
+    expect(parseImportPreview('{"common.button.save":"Save"}', "common")).toMatchObject({
+      status: "invalid",
+      error: expect.stringContaining("must not include the namespace prefix"),
+    });
+    expect(parseImportPreview('{"button{save}":"Save"}', "common")).toMatchObject({
+      status: "invalid",
+      error: expect.stringContaining("unsupported characters"),
+    });
+    expect(parseImportPreview('{"button.save":"   "}', "common")).toEqual({
+      status: "invalid",
+      error: 'The value for "button.save" cannot be empty.',
     });
   });
 });
@@ -202,6 +232,27 @@ describe("ProjectImportPanel", () => {
     );
     expect(screen.getByRole("button", { name: "Import JSON" })).toBeDisabled();
     expect(MockXMLHttpRequest.requests).toHaveLength(0);
+  });
+
+  it("renders a backend validation error returned during upload", async () => {
+    MockXMLHttpRequest.responseStatus = 400;
+    MockXMLHttpRequest.responseBody = {
+      error: {
+        code: "ValidationError",
+        message: 'Translation value for key "button.save" cannot be empty.',
+      },
+    };
+    const user = userEvent.setup();
+    renderPanel();
+
+    fireEvent.change(screen.getByLabelText("JSON object"), {
+      target: { value: '{"button.save":"Save"}' },
+    });
+    await user.click(screen.getByRole("button", { name: "Import JSON" }));
+
+    expect(
+      await screen.findByText('Translation value for key "button.save" cannot be empty.'),
+    ).toBeInTheDocument();
   });
 
   it("downloads exported translations as a named JSON file", async () => {

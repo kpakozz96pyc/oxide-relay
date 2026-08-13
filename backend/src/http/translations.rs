@@ -13,7 +13,11 @@ use crate::{
     auth::{self, AuthenticatedUser, EnvironmentAccessKind},
     errors::{ApiError, AppResult},
     repository::translations,
-    util::{optional_trimmed, required_non_empty, validate_max_length},
+    translation_validation::{
+        MAX_TRANSLATION_IMPORT_ENTRIES, validate_translation_description,
+        validate_translation_key, validate_translation_value,
+    },
+    util::{optional_trimmed, required_non_empty},
 };
 
 // ---------------------------------------------------------------------------
@@ -136,7 +140,10 @@ pub async fn list_translations(
     path = "/api/v1/projects/{project_slug}/translations",
     params(("project_slug" = String, Path, description = "Project slug")),
     request_body = CreateTranslationRequest,
-    responses((status = 201, body = TranslationResponse))
+    responses(
+        (status = 201, body = TranslationResponse),
+        (status = 400, body = crate::errors::ErrorResponse)
+    )
 )]
 pub async fn create_translation(
     State(state): State<AppState>,
@@ -145,13 +152,13 @@ pub async fn create_translation(
     Json(payload): Json<CreateTranslationRequest>,
 ) -> AppResult<(StatusCode, Json<TranslationResponse>)> {
     let project = auth::authorize_project(&state, &user, &project_slug, "EditTranslations").await?;
-    validate_create_translation(&payload)?;
+    let validated = validate_create_translation(&payload)?;
     auth::require_environment_permission(
         &state,
         &user,
         &project,
         EnvironmentAccessKind::Edit,
-        payload.environment.trim(),
+        validated.environment,
     )
     .await?;
 
@@ -159,12 +166,12 @@ pub async fn create_translation(
         &state.pool,
         translations::CreateTranslationInput {
             project_id: &project.id,
-            environment_slug: payload.environment.trim(),
-            language_code: payload.language.trim(),
-            namespace_name: payload.namespace.trim(),
-            key: payload.key.trim(),
-            value: payload.value.trim(),
-            description: payload.description.as_deref().map(str::trim),
+            environment_slug: validated.environment,
+            language_code: validated.language,
+            namespace_name: validated.namespace,
+            key: validated.key,
+            value: validated.value,
+            description: validated.description,
             user_id: &user.id,
         },
     )
@@ -181,7 +188,10 @@ pub async fn create_translation(
         ("translation_value_id" = String, Path, description = "Translation value id")
     ),
     request_body = UpdateTranslationRequest,
-    responses((status = 200, body = TranslationResponse))
+    responses(
+        (status = 200, body = TranslationResponse),
+        (status = 400, body = crate::errors::ErrorResponse)
+    )
 )]
 pub async fn update_translation(
     State(state): State<AppState>,
@@ -190,7 +200,7 @@ pub async fn update_translation(
     Json(payload): Json<UpdateTranslationRequest>,
 ) -> AppResult<Json<TranslationResponse>> {
     let project = auth::authorize_project(&state, &user, &project_slug, "EditTranslations").await?;
-    validate_update_translation(&payload)?;
+    let validated = validate_update_translation(&payload)?;
 
     let existing = translations::find_by_id(&state.pool, &project.id, &translation_value_id).await?;
     auth::require_environment_permission(
@@ -207,8 +217,8 @@ pub async fn update_translation(
         &project.id,
         &translation_value_id,
         translations::UpdateTranslationInput {
-            value: payload.value.as_deref(),
-            description: payload.description.as_ref().map(|d| optional_trimmed(Some(d.as_str()))),
+            value: validated.value,
+            description: validated.description,
             user_id: &user.id,
         },
     )
@@ -253,7 +263,10 @@ pub async fn delete_translation(
     path = "/api/v1/projects/{project_slug}/imports/json",
     params(("project_slug" = String, Path, description = "Project slug")),
     request_body = ImportTranslationsRequest,
-    responses((status = 200, body = ImportTranslationsResponse))
+    responses(
+        (status = 200, body = ImportTranslationsResponse),
+        (status = 400, body = crate::errors::ErrorResponse)
+    )
 )]
 pub async fn import_translations(
     State(state): State<AppState>,
@@ -262,24 +275,28 @@ pub async fn import_translations(
     Json(payload): Json<ImportTranslationsRequest>,
 ) -> AppResult<Json<ImportTranslationsResponse>> {
     let project = auth::authorize_project(&state, &user, &project_slug, "ImportTranslations").await?;
-    validate_import_request(&payload)?;
+    let validated = validate_import_request(&payload)?;
     auth::require_environment_permission(
         &state,
         &user,
         &project,
         EnvironmentAccessKind::Edit,
-        payload.environment.trim(),
+        validated.environment,
     )
     .await?;
 
-    let entries: Vec<(String, String)> = payload.values.into_iter().collect();
+    let entries: Vec<(String, String)> = payload
+        .values
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
 
     let imported = translations::import_batch(
         &state.pool,
         &project.id,
-        payload.environment.trim(),
-        payload.language.trim(),
-        payload.namespace.trim(),
+        validated.environment,
+        validated.language,
+        validated.namespace,
         &entries,
         &user.id,
     )
@@ -333,70 +350,92 @@ pub async fn export_translations(
 // Validation helpers
 // ---------------------------------------------------------------------------
 
-fn validate_create_translation(payload: &CreateTranslationRequest) -> AppResult<()> {
-    if payload.environment.trim().is_empty()
-        || payload.language.trim().is_empty()
-        || payload.namespace.trim().is_empty()
-        || payload.key.trim().is_empty()
-        || payload.value.trim().is_empty()
-    {
-        return Err(ApiError::validation(
-            "Environment, language, namespace, key, and value are required.",
-        ));
-    }
-
-    validate_max_length(&payload.key, 500, "Translation key")?;
-    validate_max_length(&payload.value, 10_000, "Translation value")?;
-    if let Some(desc) = &payload.description {
-        validate_max_length(desc, 2000, "Description")?;
-    }
-
-    if payload.key.contains(':')
-        || payload
-            .key
-            .starts_with(&format!("{}.", payload.namespace.trim()))
-    {
-        return Err(ApiError::validation(
-            "Translation keys must be local to the selected namespace and must not include a namespace prefix.",
-        ));
-    }
-
-    Ok(())
+struct ValidatedCreateTranslation<'a> {
+    environment: &'a str,
+    language: &'a str,
+    namespace: &'a str,
+    key: &'a str,
+    value: &'a str,
+    description: Option<&'a str>,
 }
 
-fn validate_update_translation(payload: &UpdateTranslationRequest) -> AppResult<()> {
+fn validate_create_translation(
+    payload: &CreateTranslationRequest,
+) -> AppResult<ValidatedCreateTranslation<'_>> {
+    let environment = required_non_empty(&payload.environment, "Environment is required.")?;
+    let language = required_non_empty(&payload.language, "Language is required.")?;
+    let namespace = required_non_empty(&payload.namespace, "Namespace is required.")?;
+    let key = validate_translation_key(&payload.key, namespace)?;
+    let value = validate_translation_value(&payload.value, Some(key))?;
+    let description = validate_translation_description(payload.description.as_deref())?;
+
+    Ok(ValidatedCreateTranslation {
+        environment,
+        language,
+        namespace,
+        key,
+        value,
+        description,
+    })
+}
+
+struct ValidatedUpdateTranslation<'a> {
+    value: Option<&'a str>,
+    description: Option<Option<&'a str>>,
+}
+
+fn validate_update_translation(
+    payload: &UpdateTranslationRequest,
+) -> AppResult<ValidatedUpdateTranslation<'_>> {
     if payload.value.is_none() && payload.description.is_none() {
         return Err(ApiError::validation(
             "At least one field must be provided for translation update.",
         ));
     }
 
-    if let Some(value) = &payload.value
-        && value.trim().is_empty()
-    {
-        return Err(ApiError::validation("Translation value cannot be empty."));
-    }
+    let value = payload
+        .value
+        .as_deref()
+        .map(|value| validate_translation_value(value, None))
+        .transpose()?;
+    let description = payload
+        .description
+        .as_deref()
+        .map(|description| validate_translation_description(Some(description)))
+        .transpose()?;
 
-    Ok(())
+    Ok(ValidatedUpdateTranslation { value, description })
 }
 
-fn validate_import_request(payload: &ImportTranslationsRequest) -> AppResult<()> {
-    if payload.environment.trim().is_empty()
-        || payload.language.trim().is_empty()
-        || payload.namespace.trim().is_empty()
-    {
-        return Err(ApiError::validation(
-            "Environment, language, and namespace are required.",
-        ));
+struct ValidatedImportRequest<'a> {
+    environment: &'a str,
+    language: &'a str,
+    namespace: &'a str,
+}
+
+fn validate_import_request(
+    payload: &ImportTranslationsRequest,
+) -> AppResult<ValidatedImportRequest<'_>> {
+    let environment = required_non_empty(&payload.environment, "Environment is required.")?;
+    let language = required_non_empty(&payload.language, "Language is required.")?;
+    let namespace = required_non_empty(&payload.namespace, "Namespace is required.")?;
+
+    if payload.values.len() > MAX_TRANSLATION_IMPORT_ENTRIES {
+        return Err(ApiError::validation(format!(
+            "Import batch must not exceed {MAX_TRANSLATION_IMPORT_ENTRIES} entries."
+        )));
     }
 
-    if payload.values.len() > 5000 {
-        return Err(ApiError::validation(
-            "Import batch must not exceed 5000 entries.",
-        ));
+    for (key, value) in &payload.values {
+        let key = validate_translation_key(key, namespace)?;
+        validate_translation_value(value, Some(key))?;
     }
 
-    Ok(())
+    Ok(ValidatedImportRequest {
+        environment,
+        language,
+        namespace,
+    })
 }
 
 fn parse_languages_query(value: &str) -> AppResult<Vec<String>> {
@@ -442,14 +481,24 @@ pub struct CreateTranslationRequest {
     pub environment: String,
     pub language: String,
     pub namespace: String,
+    /// Local key without the selected namespace prefix. Colons, braces, and control characters are not allowed.
+    #[schema(min_length = 1, max_length = 500)]
     pub key: String,
+    /// Non-empty translation value.
+    #[schema(min_length = 1, max_length = 10000)]
     pub value: String,
+    /// Optional description. Empty or whitespace-only input is stored as null.
+    #[schema(max_length = 2000)]
     pub description: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateTranslationRequest {
+    /// Non-empty translation value when supplied.
+    #[schema(min_length = 1, max_length = 10000)]
     pub value: Option<String>,
+    /// Optional description. Empty or whitespace-only input clears the description.
+    #[schema(max_length = 2000)]
     pub description: Option<String>,
 }
 
@@ -458,6 +507,7 @@ pub struct ImportTranslationsRequest {
     pub environment: String,
     pub language: String,
     pub namespace: String,
+    /// At most 5000 local translation keys. The batch is validated and committed atomically.
     pub values: BTreeMap<String, String>,
 }
 

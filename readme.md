@@ -186,6 +186,28 @@ grid cell — it never prevents saving.
 
 ---
 
+## Translation Write Validation
+
+The backend applies the same validation rules to translation creation, updates,
+and JSON imports:
+
+* Keys are trimmed, non-empty, and limited to 500 Unicode characters.
+* Keys are local to the selected namespace and must not start with
+  `{namespace}.`.
+* Colons, braces, and control characters are not allowed in keys. Other
+  printable Unicode characters, dots, hyphens, underscores, and spaces are
+  supported.
+* Values are trimmed, non-empty, and limited to 10,000 Unicode characters.
+* Descriptions are optional and limited to 2,000 Unicode characters.
+  Empty or whitespace-only descriptions are stored as `null`.
+
+JSON import accepts a flat object with at most 5,000 entries. It validates the
+entire batch before writing, rejects the whole batch when any entry is invalid,
+and upserts existing values for the selected environment, language, and
+namespace.
+
+---
+
 # Users and Permissions
 
 OxideRelay uses a permission-based access model.

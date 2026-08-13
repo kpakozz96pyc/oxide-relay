@@ -227,12 +227,13 @@ Steps to prepare and publish a new OxideRelay release, in order:
    defaults, or environment variables introduced since the last release.
 7. Push the release tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. This
    triggers the
-   [Publish Docker image](../.github/workflows/docker-publish.yml) workflow,
+   [Publish release](../.github/workflows/docker-publish.yml) workflow,
    which builds and pushes `kpakozz96pyc/oxiderelay:vX.Y.Z` (and `:latest` for
-   stable, non-pre-release tags).
-8. Create GitHub release notes for the tag: summarize user-facing changes,
-   reference closed issues/PRs, and call out anything migration-relevant per
-   the Schema and Upgrade Policy above.
+   stable, non-pre-release tags), packages the native Linux archive, and creates
+   a GitHub Release with that archive attached.
+8. Review and edit the generated GitHub release notes: summarize user-facing
+   changes, reference closed issues/PRs, and call out anything migration-relevant
+   per the Schema and Upgrade Policy above.
 
 ## Smoke Checklist
 

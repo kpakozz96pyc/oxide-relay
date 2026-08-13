@@ -1,4 +1,4 @@
-name: Publish Docker image
+name: Publish release
 
 on:
   push:
@@ -12,6 +12,8 @@ jobs:
   build-native-artifact:
     name: Build native release artifact
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -38,6 +40,21 @@ jobs:
           name: native-release-${{ github.ref_name }}-linux-x86_64
           path: ${{ steps.package.outputs.artifact_path }}
           if-no-files-found: error
+
+      - name: Publish native archive to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact_path="${{ steps.package.outputs.artifact_path }}"
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${artifact_path}" --clobber
+          else
+            release_args=(--verify-tag --generate-notes --title "${GITHUB_REF_NAME}")
+            if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+              release_args+=(--prerelease)
+            fi
+            gh release create "${GITHUB_REF_NAME}" "${artifact_path}" "${release_args[@]}"
+          fi
 
   build-and-push:
     name: Build and push release image

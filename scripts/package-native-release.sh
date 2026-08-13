@@ -6,9 +6,14 @@ cd "$REPO_ROOT"
 
 read -r package_name package_version binary_name <<<"$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys
 metadata = json.load(sys.stdin)
-root_id = metadata.get("resolve", {}).get("root")
+resolve = metadata.get("resolve") or {}
+root_id = resolve.get("root")
 packages = {pkg["id"]: pkg for pkg in metadata["packages"]}
-package = packages.get(root_id) or metadata["packages"][0]
+default_ids = metadata.get("workspace_default_members") or []
+package = packages.get(root_id)
+if package is None:
+    package = next((packages[package_id] for package_id in default_ids if package_id in packages), None)
+package = package or metadata["packages"][0]
 binary_names = [target["name"] for target in package["targets"] if "bin" in target["kind"]]
 if not binary_names:
     raise SystemExit("No binary target found in root package")

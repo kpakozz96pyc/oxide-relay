@@ -478,6 +478,165 @@ async fn member_without_edit_permission_cannot_update_project() {
 }
 
 #[tokio::test]
+async fn revoking_delete_projects_immediately_blocks_a_non_owner_member_without_logout() {
+    let harness = TestHarness::new().await;
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+    let owner_id = harness
+        .insert_user("revoke-owner@example.com", "owner-password", "Owner", true)
+        .await;
+    let member_id = harness
+        .insert_user("revoke-member@example.com", "member-password", "Member", true)
+        .await;
+    let project_a_id = harness
+        .insert_project(&owner_id, "Revoke Project A", "revoke-project-a")
+        .await;
+    let project_b_id = harness
+        .insert_project(&owner_id, "Revoke Project B", "revoke-project-b")
+        .await;
+    harness.add_project_access(&member_id, &project_a_id).await;
+    harness.add_project_access(&member_id, &project_b_id).await;
+
+    // Grant DeleteProjects through the real API, not a direct SQL insert, so this test
+    // exercises the same code path an admin actually uses.
+    let grant = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{member_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({ "permission_codes": ["ViewProjects", "DeleteProjects"] }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(grant.status(), StatusCode::NO_CONTENT);
+
+    let member_cookie = harness
+        .login("revoke-member@example.com", "member-password")
+        .await;
+
+    let delete_project_a = harness
+        .request(
+            Request::builder()
+                .method("DELETE")
+                .uri("/api/v1/projects/revoke-project-a")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(delete_project_a.status(), StatusCode::NO_CONTENT);
+
+    // Revoke DeleteProjects via the same admin endpoint. The member never logs out or
+    // gets a new session between the grant and this revocation, or between the
+    // revocation and the retry below.
+    let revoke = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{member_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(json!({ "permission_codes": ["ViewProjects"] }).to_string()))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(revoke.status(), StatusCode::NO_CONTENT);
+
+    let delete_project_b = harness
+        .request(
+            Request::builder()
+                .method("DELETE")
+                .uri("/api/v1/projects/revoke-project-b")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(delete_project_b.status(), StatusCode::FORBIDDEN);
+    let delete_project_b_body = json_body(delete_project_b).await;
+    assert_eq!(delete_project_b_body["error"]["code"], "PermissionDenied");
+}
+
+#[tokio::test]
+async fn revoking_edit_projects_immediately_blocks_a_non_owner_member_without_logout() {
+    let harness = TestHarness::new().await;
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+    let owner_id = harness
+        .insert_user("revoke-edit-owner@example.com", "owner-password", "Owner", true)
+        .await;
+    let member_id = harness
+        .insert_user("revoke-edit-member@example.com", "member-password", "Member", true)
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Revoke Edit Project", "revoke-edit-project")
+        .await;
+    harness.add_project_access(&member_id, &project_id).await;
+
+    let grant = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{member_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({ "permission_codes": ["ViewProjects", "EditProjects"] }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(grant.status(), StatusCode::NO_CONTENT);
+
+    let member_cookie = harness
+        .login("revoke-edit-member@example.com", "member-password")
+        .await;
+
+    let first_update = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/projects/revoke-edit-project")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::from(json!({ "name": "Edited By Member" }).to_string()))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(first_update.status(), StatusCode::OK);
+
+    let revoke = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{member_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(json!({ "permission_codes": ["ViewProjects"] }).to_string()))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(revoke.status(), StatusCode::NO_CONTENT);
+
+    let second_update = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/projects/revoke-edit-project")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::from(json!({ "name": "Should Not Apply" }).to_string()))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(second_update.status(), StatusCode::FORBIDDEN);
+    let second_update_body = json_body(second_update).await;
+    assert_eq!(second_update_body["error"]["code"], "PermissionDenied");
+}
+
+#[tokio::test]
 async fn public_delivery_endpoints_return_expected_payloads() {
     let harness = TestHarness::new().await;
     let owner_id = harness

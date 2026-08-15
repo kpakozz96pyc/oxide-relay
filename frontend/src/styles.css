@@ -278,6 +278,12 @@ th {
   box-shadow: 0 0 0 3px color-mix(in srgb, #fdba74 35%, transparent 65%);
 }
 
+.grid-input:disabled {
+  background: color-mix(in srgb, var(--surface) 88%, transparent 12%);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
 .grid-cell {
   position: relative;
 }

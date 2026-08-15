@@ -167,6 +167,84 @@ describe("ProjectTranslationsPanel permission gating (OXR-55)", () => {
   });
 });
 
+describe("ProjectTranslationsPanel write-control permission gating (OXR-56)", () => {
+  function renderPanelWithPermissions(permissions: string[]) {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+
+      if (path === "/api/v1/me/permissions") {
+        return Promise.resolve(jsonResponse({ permissions }));
+      }
+      if (path === "/api/v1/projects/demo-project/translations/grid") {
+        return Promise.resolve(jsonResponse(gridResponse));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <I18nProvider>
+          <ProjectTranslationsPanel
+            environments={environments}
+            languages={languages}
+            namespaces={namespaces}
+            project={project}
+            projectSlug={project.slug}
+          />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+
+    return { fetchMock };
+  }
+
+  it("disables the value and description cells for a read-only member (ReadTranslations only)", async () => {
+    renderPanelWithPermissions(["ReadTranslations"]);
+
+    const valueInput = await screen.findByDisplayValue("Save");
+    expect(valueInput).toBeDisabled();
+    const descriptionInput = screen.getByPlaceholderText("Optional description");
+    expect(descriptionInput).toBeDisabled();
+
+    // Without EditTranslations/DeleteTranslations there is nothing to create or delete.
+    expect(screen.queryByRole("button", { name: "+" })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("translation.key")).not.toBeInTheDocument();
+  });
+
+  it("keeps the value cell disabled when EditTranslations is granted without the environment permission", async () => {
+    // This is the exact gap the bug report described: a member has EditTranslations but
+    // not EditProd for the "production" environment used in these fixtures, so the
+    // backend would still reject the write. The cell must stay disabled, not just fail
+    // silently after the request.
+    renderPanelWithPermissions(["ReadTranslations", "EditTranslations"]);
+
+    const valueInput = await screen.findByDisplayValue("Save");
+    expect(valueInput).toBeDisabled();
+  });
+
+  it("enables the value and description cells once the caller holds full write permissions", async () => {
+    renderPanelWithPermissions([
+      "ReadTranslations",
+      "EditTranslations",
+      "EditProd",
+      "DeleteTranslations",
+    ]);
+
+    const valueInput = await screen.findByDisplayValue("Save");
+    expect(valueInput).not.toBeDisabled();
+    const existingRow = valueInput.closest("tr");
+    if (!existingRow) {
+      throw new Error("expected the translation row to contain the value input");
+    }
+    const descriptionInput = within(existingRow).getByPlaceholderText("Optional description");
+    expect(descriptionInput).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "+" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Delete/ })).not.toBeDisabled();
+  });
+});
+
 describe("ProjectTranslationsPanel new-key draft stability (OXR-62)", () => {
   const ownerProject: Project = { ...project, owner_user_id: "owner-1", is_owner: true };
   const twoNamespaces: Namespace[] = [

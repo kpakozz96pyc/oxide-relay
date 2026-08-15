@@ -302,6 +302,10 @@ export function ProjectTranslationsPanel({
   const canReadCurrentEnvironment = project.is_owner || permissionSet.has("ReadTranslations");
   const canEditCurrentEnvironment = project.is_owner || permissionSet.has(editEnvironmentPermission(environment));
   const canCreateTranslation = project.is_owner || (permissionSet.has("EditTranslations") && canEditCurrentEnvironment);
+  // Update shares the exact same backend authorization as create (EditTranslations AND
+  // EditProd/EditAll) but is tracked separately so the grid can disable in-place editing
+  // of existing values without touching the "add new key" affordance.
+  const canUpdateTranslation = canCreateTranslation;
   const canDeleteTranslation = project.is_owner || (permissionSet.has("DeleteTranslations") && canEditCurrentEnvironment);
   const translationRows = translationsQuery.data?.items ?? [];
   const totalTranslationRows = translationsQuery.data?.total ?? 0;
@@ -860,6 +864,7 @@ export function ProjectTranslationsPanel({
                         <input
                           className={`${focusedCell === descKey ? "grid-input is-focused" : "grid-input"}${cellStatusClassName(descState?.status)}`}
                           data-grid-focus="true"
+                          disabled={!canUpdateTranslation}
                           onBlur={() => {
                             void commitDescription(translation);
                           }}
@@ -907,6 +912,7 @@ export function ProjectTranslationsPanel({
                             <input
                               className={`${focusedCell === draftKey ? "grid-input is-focused" : "grid-input"}${emptyClassName}${cellStatusClassName(cellState?.status)}${placeholderWarningClassName}`}
                               data-grid-focus="true"
+                              disabled={!canUpdateTranslation}
                               onBlur={() => {
                                 void commitTranslationValue(translation, languageCode);
                               }}

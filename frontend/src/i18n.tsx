@@ -46,10 +46,16 @@ const DEFAULT_SUPPORTED_LANGUAGES = [
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
-function buildNamespaceUrl(language: string, version?: string): string {
+function buildNamespaceUrl(language: string): string {
+  // Deliberately unversioned: the delivery-metadata `version` this module tracks is an
+  // environment-wide hash (every language and namespace), not the per-namespace version
+  // static_namespace_file validates a `?v=` against. Sending the metadata version here
+  // almost never matches the namespace-scoped one it expects, so every request would be
+  // rejected as a stale version (OXR-61). Freshness instead comes from the endpoint's own
+  // short, revalidating Cache-Control plus ETag/If-None-Match.
   const path = `/static/${OXIDERELAY_PROJECT_SLUG}/${encodeURIComponent(OXIDERELAY_ENVIRONMENT)}/${encodeURIComponent(
     language,
-  )}/${encodeURIComponent(OXIDERELAY_NAMESPACE)}.json${version ? `?v=${encodeURIComponent(version)}` : ""}`;
+  )}/${encodeURIComponent(OXIDERELAY_NAMESPACE)}.json`;
   const baseUrl = import.meta.env.VITE_I18N_BASE_URL?.trim();
 
   if (!baseUrl) {
@@ -163,7 +169,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     setError(null);
     setMessages(localMessages);
 
-    void fetch(buildNamespaceUrl(language, version ?? undefined), { signal: controller.signal })
+    void fetch(buildNamespaceUrl(language), { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`translation request failed with status ${response.status}`);

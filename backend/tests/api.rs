@@ -745,6 +745,150 @@ async fn public_delivery_endpoints_return_expected_payloads() {
 }
 
 #[tokio::test]
+async fn delivery_manifest_urls_stay_valid_across_a_translation_edit() {
+    let harness = TestHarness::new().await;
+    let owner_id = harness
+        .insert_user(
+            "manifest-cycle-owner@example.com",
+            "owner-password",
+            "Manifest Cycle Owner",
+            true,
+        )
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Manifest Cycle Project", "manifest-cycle-project")
+        .await;
+    harness.add_project_access(&owner_id, &project_id).await;
+    let namespace_id = harness.insert_namespace(&project_id, "common").await;
+    let language_id = harness.insert_language(&project_id, "en", "English").await;
+    let environment_id = harness
+        .insert_environment(&project_id, "Production", "production")
+        .await;
+    let key_id = harness
+        .insert_translation_key(&project_id, &namespace_id, "button.save")
+        .await;
+    let translation_value_id = harness
+        .insert_translation_value(&key_id, &language_id, &environment_id, "Save")
+        .await;
+
+    async fn fetch_manifest(harness: &TestHarness) -> Value {
+        let response = harness
+            .request(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/projects/manifest-cycle-project/delivery-manifest/en?environment=production")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        json_body(response).await
+    }
+
+    async fn follow(harness: &TestHarness, url: &str) -> axum::response::Response {
+        harness
+            .request(
+                Request::builder()
+                    .method("GET")
+                    .uri(url)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+    }
+
+    // manifest -> URL
+    let manifest_before = fetch_manifest(&harness).await;
+    let namespace_url_before = manifest_before["namespaces"][0]["url"]
+        .as_str()
+        .expect("namespace url")
+        .to_owned();
+    let locale_bundle_url_before = manifest_before["locale_bundle_url"]
+        .as_str()
+        .expect("locale bundle url")
+        .to_owned();
+
+    let namespace_response_before = follow(&harness, &namespace_url_before).await;
+    assert_eq!(namespace_response_before.status(), StatusCode::OK);
+    assert_eq!(
+        namespace_response_before
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("cache-control"),
+        "public, max-age=31536000, immutable",
+        "a manifest-issued URL must validate and get the immutable cache header"
+    );
+    let namespace_body_before = json_body(namespace_response_before).await;
+    assert_eq!(namespace_body_before["button.save"], "Save");
+
+    let locale_bundle_response_before = follow(&harness, &locale_bundle_url_before).await;
+    assert_eq!(locale_bundle_response_before.status(), StatusCode::OK);
+
+    // edit
+    let owner_cookie = harness
+        .login("manifest-cycle-owner@example.com", "owner-password")
+        .await;
+    let update_translation = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!(
+                    "/api/v1/projects/manifest-cycle-project/translations/{translation_value_id}"
+                ))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::from(json!({ "value": "Save now" }).to_string()))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(update_translation.status(), StatusCode::OK);
+
+    // new manifest -> new URL
+    let manifest_after = fetch_manifest(&harness).await;
+    let namespace_url_after = manifest_after["namespaces"][0]["url"]
+        .as_str()
+        .expect("namespace url")
+        .to_owned();
+    let locale_bundle_url_after = manifest_after["locale_bundle_url"]
+        .as_str()
+        .expect("locale bundle url")
+        .to_owned();
+    assert_ne!(
+        namespace_url_after, namespace_url_before,
+        "the namespace URL must change after the content it points to changes"
+    );
+    assert_ne!(
+        locale_bundle_url_after, locale_bundle_url_before,
+        "the locale bundle URL must change after the content it points to changes"
+    );
+
+    let namespace_response_after = follow(&harness, &namespace_url_after).await;
+    assert_eq!(
+        namespace_response_after.status(),
+        StatusCode::OK,
+        "every URL returned by the manifest must resolve successfully"
+    );
+    let namespace_body_after = json_body(namespace_response_after).await;
+    assert_eq!(
+        namespace_body_after["button.save"], "Save now",
+        "the current version must return the updated content"
+    );
+
+    let locale_bundle_response_after = follow(&harness, &locale_bundle_url_after).await;
+    assert_eq!(locale_bundle_response_after.status(), StatusCode::OK);
+    let locale_bundle_body_after = json_body(locale_bundle_response_after).await;
+    assert_eq!(
+        locale_bundle_body_after["values"]["common.button.save"],
+        "Save now"
+    );
+
+    // the old, now-superseded URL is correctly rejected rather than silently serving
+    // stale content under an "immutable" cache header
+    let namespace_response_stale = follow(&harness, &namespace_url_before).await;
+    assert_eq!(namespace_response_stale.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn delivery_urls_reject_a_version_that_does_not_match_the_current_content() {
     let harness = TestHarness::new().await;
     let owner_id = harness

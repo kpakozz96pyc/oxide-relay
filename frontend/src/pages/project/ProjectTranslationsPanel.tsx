@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useRef, useState, type FocusEvent } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Environment,
@@ -117,6 +117,13 @@ export function ProjectTranslationsPanel({
       setNamespace(namespaces[0].name);
     }
   }, [namespace, namespaces]);
+
+  useEffect(() => {
+    // A new-key draft is scoped to the namespace it was started in (its key belongs to
+    // that namespace); carrying it across a namespace switch would create the key in the
+    // wrong place, or silently discard values the user thought were about to save.
+    setNewTermDrafts([{ id: createDraftId(), key: "", description: "", values: {} }]);
+  }, [namespace]);
 
   useEffect(() => {
     setPage(1);
@@ -528,51 +535,6 @@ export function ProjectTranslationsPanel({
     });
   };
 
-  const savePendingNewTermDrafts = async () => {
-    const pendingDrafts = newTermDrafts.filter((draft) => draft.key.trim().length > 0);
-    if (pendingDrafts.length === 0) {
-      setNewTermDrafts([{ id: createDraftId(), key: "", description: "", values: {} }]);
-      return;
-    }
-
-    const remainingDrafts: NewTermDraft[] = [];
-
-    for (const draft of pendingDrafts) {
-      const description = draft.description.trim() || undefined;
-      let savedAnyValue = false;
-      for (const languageCode of displayLanguageCodes) {
-        const value = draft.values[languageCode]?.trim();
-        if (!value) {
-          continue;
-        }
-        await createMutation.mutateAsync({
-          key: draft.key.trim(),
-          languageCode,
-          value,
-          description,
-        });
-        savedAnyValue = true;
-      }
-
-      if (!savedAnyValue) {
-        remainingDrafts.push(draft);
-      }
-    }
-
-    setNewTermDrafts([
-      ...remainingDrafts,
-      { id: createDraftId(), key: "", description: "", values: {} },
-    ]);
-  };
-
-  const handleTranslationGridBlurCapture = (event: FocusEvent<HTMLDivElement>) => {
-    const nextTarget = event.relatedTarget;
-    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
-      return;
-    }
-    void savePendingNewTermDrafts();
-  };
-
   return (
     <article className="panel stack gap-md">
       <header className="panel-header">
@@ -713,11 +675,7 @@ export function ProjectTranslationsPanel({
           {deleteMutation.isError ? (
             <div className="banner error">{buildErrorMessage(deleteMutation.error)}</div>
           ) : null}
-          <div
-            className="table-shell translation-grid-shell"
-            onBlurCapture={handleTranslationGridBlurCapture}
-            ref={translationGridRef}
-          >
+          <div className="table-shell translation-grid-shell" ref={translationGridRef}>
             <table>
               <thead>
                 <tr>

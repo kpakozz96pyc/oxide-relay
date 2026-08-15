@@ -3159,6 +3159,122 @@ async fn custom_environments_use_edit_all_and_production_uses_edit_prod() {
     assert_eq!(create_production.status(), StatusCode::CREATED);
 }
 
+#[tokio::test]
+async fn import_requires_both_import_translations_and_the_matching_environment_permission() {
+    let harness = TestHarness::new().await;
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+    let owner_id = harness
+        .insert_user("import-matrix-owner@example.com", "owner-password", "Owner", true)
+        .await;
+    let member_id = harness
+        .insert_user("import-matrix-member@example.com", "member-password", "Member", true)
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Import Matrix Project", "import-matrix-project")
+        .await;
+    harness.add_project_access(&member_id, &project_id).await;
+    harness.insert_namespace(&project_id, "common").await;
+    harness.insert_language(&project_id, "en", "English").await;
+    // "development" and "staging" mirror the project's usual bootstrapped defaults; "sandbox"
+    // stands in for an arbitrary custom environment; both must resolve to EditAll, while only
+    // "production" requires EditProd.
+    harness
+        .insert_environment(&project_id, "Development", "development")
+        .await;
+    harness.insert_environment(&project_id, "Staging", "staging").await;
+    harness.insert_environment(&project_id, "Sandbox", "sandbox").await;
+    harness
+        .insert_environment(&project_id, "Production", "production")
+        .await;
+
+    let member_cookie = harness
+        .login("import-matrix-member@example.com", "member-password")
+        .await;
+    let import_path = "/api/v1/projects/import-matrix-project/imports/json";
+
+    let cases = [
+        ("development", "EditAll"),
+        ("staging", "EditAll"),
+        ("sandbox", "EditAll"),
+        ("production", "EditProd"),
+    ];
+
+    for (environment, env_permission) in cases {
+        let key = format!("import.matrix.{environment}");
+
+        replace_permissions(&harness, &admin_cookie, &member_id, &["ImportTranslations"]).await;
+        let missing_env_permission = json_request(
+            &harness,
+            "POST",
+            import_path,
+            &member_cookie,
+            json!({
+                "environment": environment,
+                "language": "en",
+                "namespace": "common",
+                "values": { key.clone(): "Value" }
+            }),
+        )
+        .await;
+        assert_eq!(
+            missing_env_permission.status(),
+            StatusCode::FORBIDDEN,
+            "environment={environment}: ImportTranslations alone must not be enough"
+        );
+        let missing_env_permission_body = json_body(missing_env_permission).await;
+        assert_eq!(missing_env_permission_body["error"]["code"], "PermissionDenied");
+
+        replace_permissions(&harness, &admin_cookie, &member_id, &[env_permission]).await;
+        let missing_import_permission = json_request(
+            &harness,
+            "POST",
+            import_path,
+            &member_cookie,
+            json!({
+                "environment": environment,
+                "language": "en",
+                "namespace": "common",
+                "values": { key.clone(): "Value" }
+            }),
+        )
+        .await;
+        assert_eq!(
+            missing_import_permission.status(),
+            StatusCode::FORBIDDEN,
+            "environment={environment}: {env_permission} alone must not be enough"
+        );
+        let missing_import_permission_body = json_body(missing_import_permission).await;
+        assert_eq!(missing_import_permission_body["error"]["code"], "PermissionDenied");
+
+        replace_permissions(
+            &harness,
+            &admin_cookie,
+            &member_id,
+            &["ImportTranslations", env_permission],
+        )
+        .await;
+        let authorized = json_request(
+            &harness,
+            "POST",
+            import_path,
+            &member_cookie,
+            json!({
+                "environment": environment,
+                "language": "en",
+                "namespace": "common",
+                "values": { key: "Value" }
+            }),
+        )
+        .await;
+        assert_eq!(
+            authorized.status(),
+            StatusCode::OK,
+            "environment={environment}: ImportTranslations + {env_permission} must be enough"
+        );
+        assert_eq!(json_body(authorized).await["imported"], 1);
+    }
+}
+
 struct TestHarness {
     _temp_dir: TempDir,
     pool: SqlitePool,
@@ -3493,6 +3609,21 @@ async fn json_request(
                 .expect("request"),
         )
         .await
+}
+
+/// Replaces a user's direct permission set exactly (via the real admin API), so a test can
+/// assert both "missing permission X" and "has permission X" without permission grants
+/// leaking between steps the way the additive `assign_permissions` helper would.
+async fn replace_permissions(harness: &TestHarness, admin_cookie: &str, user_id: &str, codes: &[&str]) {
+    let response = json_request(
+        harness,
+        "PUT",
+        &format!("/api/v1/users/{user_id}/permissions"),
+        admin_cookie,
+        json!({ "permission_codes": codes }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
 
 async fn import_request(

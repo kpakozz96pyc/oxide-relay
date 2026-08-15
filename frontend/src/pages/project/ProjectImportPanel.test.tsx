@@ -10,8 +10,10 @@ import {
   parseImportPreview,
 } from "./ProjectImportPanel";
 
+let mockPermissions = new Set<string>(["ImportTranslations", "ExportTranslations", "EditAll", "EditProd"]);
+
 vi.mock("../../hooks/usePermissionSet", () => ({
-  usePermissionSet: () => ({ has: () => true }),
+  usePermissionSet: () => ({ has: (code: string) => mockPermissions.has(code) }),
 }));
 
 const project: Project = {
@@ -23,6 +25,12 @@ const project: Project = {
   created_at: "2026-08-06T00:00:00Z",
   updated_at: "2026-08-06T00:00:00Z",
   is_owner: true,
+};
+
+const nonOwnerProject: Project = {
+  ...project,
+  owner_user_id: "someone-else",
+  is_owner: false,
 };
 
 const languages: Language[] = [
@@ -52,6 +60,14 @@ const environments: Environment[] = [
     project_id: project.id,
     name: "Production",
     slug: "production",
+    created_at: "2026-08-06T00:00:00Z",
+    updated_at: "2026-08-06T00:00:00Z",
+  },
+  {
+    id: "environment-2",
+    project_id: project.id,
+    name: "Development",
+    slug: "development",
     created_at: "2026-08-06T00:00:00Z",
     updated_at: "2026-08-06T00:00:00Z",
   },
@@ -100,7 +116,7 @@ class MockXMLHttpRequest {
   }
 }
 
-function renderPanel() {
+function renderPanel(projectOverride: Project = project) {
   const queryClient = new QueryClient({
     defaultOptions: {
       mutations: { retry: false },
@@ -114,8 +130,8 @@ function renderPanel() {
         environments={environments}
         languages={languages}
         namespaces={namespaces}
-        project={project}
-        projectSlug={project.slug}
+        project={projectOverride}
+        projectSlug={projectOverride.slug}
       />
     </QueryClientProvider>,
   );
@@ -126,6 +142,7 @@ beforeEach(() => {
   MockXMLHttpRequest.responseStatus = 200;
   MockXMLHttpRequest.responseBody = { imported: 2 };
   vi.stubGlobal("XMLHttpRequest", MockXMLHttpRequest);
+  mockPermissions = new Set(["ImportTranslations", "ExportTranslations", "EditAll", "EditProd"]);
 });
 
 afterEach(() => {
@@ -297,6 +314,56 @@ describe("ProjectImportPanel", () => {
     expect(downloadedFilename).toBe("demo-project-production-en-common.json");
     expect(downloadedHref).toBe("blob:export");
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:export");
+  });
+});
+
+describe("ProjectImportPanel import permission gating (OXR-60)", () => {
+  const deniedBannerText = /Import requires owner access or the/;
+
+  it("disables import for a production target when ImportTranslations is held but EditProd is not", () => {
+    mockPermissions = new Set(["ImportTranslations", "EditAll"]);
+    renderPanel(nonOwnerProject);
+
+    expect(screen.getByText(deniedBannerText)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import JSON" })).toBeDisabled();
+  });
+
+  it("disables import for a production target when EditProd is held but ImportTranslations is not", () => {
+    mockPermissions = new Set(["EditProd"]);
+    renderPanel(nonOwnerProject);
+
+    expect(screen.getByText(deniedBannerText)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import JSON" })).toBeDisabled();
+  });
+
+  it("allows import for a production target once both ImportTranslations and EditProd are held", () => {
+    mockPermissions = new Set(["ImportTranslations", "EditProd"]);
+    renderPanel(nonOwnerProject);
+
+    expect(screen.queryByText(deniedBannerText)).not.toBeInTheDocument();
+  });
+
+  it("disables import for a non-production target when only EditProd (not EditAll) is held", () => {
+    mockPermissions = new Set(["ImportTranslations", "EditProd"]);
+    renderPanel(nonOwnerProject);
+
+    fireEvent.change(screen.getByLabelText("Environment"), {
+      target: { value: "development" },
+    });
+
+    expect(screen.getByText(deniedBannerText)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import JSON" })).toBeDisabled();
+  });
+
+  it("allows import for a non-production target once ImportTranslations and EditAll are held, without EditProd", () => {
+    mockPermissions = new Set(["ImportTranslations", "EditAll"]);
+    renderPanel(nonOwnerProject);
+
+    fireEvent.change(screen.getByLabelText("Environment"), {
+      target: { value: "development" },
+    });
+
+    expect(screen.queryByText(deniedBannerText)).not.toBeInTheDocument();
   });
 });
 

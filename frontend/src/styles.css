@@ -1466,6 +1466,26 @@ th {
   border-bottom: 1px dotted var(--border-dotted);
 }
 
+.import-target-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.import-target-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.missing-permissions-list {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+}
+
 .import-export-grid {
   align-items: start;
 }

@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -6,13 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import type { Project, TranslationGridRow } from "./api";
+import { createQueryClient } from "./queryClient";
 
 function renderApp(initialEntries: string[]) {
-  const client = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
+  // Use the same client factory main.tsx does, so tests exercise the real global 401
+  // handling (queryClient.ts) instead of a bare QueryClient that silently ignores it.
+  const client = createQueryClient({
+    queries: {
+      retry: false,
     },
   });
 
@@ -109,6 +110,98 @@ describe("App routing", () => {
     );
 
     renderApp(["/projects"]);
+
+    expect(await screen.findByText("login.form.title")).toBeInTheDocument();
+  });
+
+  it.each([["/users"], ["/projects/demo-project"]])(
+    "redirects to /login when %s is opened directly without a session",
+    async (path) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = new URL(typeof input === "string" ? input : input.toString(), "http://localhost");
+
+          if (isLocaleRequest(url.pathname)) {
+            return jsonResponse(TEST_LOCALE_MESSAGES);
+          }
+
+          if (isMetadataRequest(url.pathname)) {
+            return jsonResponse({
+              version: "v1",
+              languages: [{ code: "en", name: "English" }],
+              namespaces: [{ name: "common" }],
+            });
+          }
+
+          if (url.pathname === "/api/v1/me") {
+            return unauthorizedResponse();
+          }
+
+          throw new Error(`Unexpected request: ${url.pathname}${url.search}`);
+        }),
+      );
+
+      renderApp([path]);
+
+      expect(await screen.findByText("login.form.title")).toBeInTheDocument();
+    },
+  );
+
+  it("redirects to /login when a session invalidated elsewhere causes a 401 during client-side navigation", async () => {
+    const user = userEvent.setup();
+    // The session looks valid for the initial /projects load; it's only once the user
+    // navigates to /users (simulating some time passing, e.g. the session expired or was
+    // invalidated by a self-delete/password-reset elsewhere) that the server starts
+    // rejecting requests for it.
+    let sessionInvalidated = false;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(typeof input === "string" ? input : input.toString(), "http://localhost");
+        const path = url.pathname;
+
+        if (isLocaleRequest(path)) {
+          return jsonResponse(TEST_LOCALE_MESSAGES);
+        }
+
+        if (isMetadataRequest(path)) {
+          return jsonResponse({
+            version: "v1",
+            languages: [{ code: "en", name: "English" }],
+            namespaces: [{ name: "common" }],
+          });
+        }
+
+        if (path === "/api/v1/me") {
+          return sessionInvalidated ? unauthorizedResponse() : jsonResponse({
+            user: { id: "user-1", email: "admin@example.com", display_name: "Administrator" },
+          });
+        }
+
+        if (path === "/api/v1/me/permissions") {
+          return jsonResponse({ permissions: ["ManageUsers"] });
+        }
+
+        if (path === "/api/v1/projects") {
+          return jsonResponse([]);
+        }
+
+        if (path === "/api/v1/users/summary") {
+          return unauthorizedResponse();
+        }
+
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderApp(["/projects"]);
+
+    expect(await screen.findByText("projects.title")).toBeInTheDocument();
+
+    sessionInvalidated = true;
+    await user.click(screen.getByRole("link", { name: "Users" }));
 
     expect(await screen.findByText("login.form.title")).toBeInTheDocument();
   });
@@ -1078,9 +1171,16 @@ describe("App routing", () => {
     expect(screen.getByRole("heading", { name: "Environments" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Security" }));
+    // OXR-63 regression: opening a user's Security tab must not narrow the shared
+    // users-summary list down to just the selected user. "Member" only appears as a
+    // table row (the selected user's own name is also shown in the panel header), so
+    // this is unambiguous.
+    expect(screen.getByText("Member")).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: "Generate reset link" }));
 
     expect(await screen.findByText("One-time reset link")).toBeInTheDocument();
+    expect(screen.getByText("Member")).toBeInTheDocument();
     expect(screen.getByText("/reset-password?token=one-time-token")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Copy link" }));
     expect(clipboardWriteText).toHaveBeenCalledWith("/reset-password?token=one-time-token");

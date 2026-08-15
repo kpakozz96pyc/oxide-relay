@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Environment, Language, Namespace, Project, TranslationGridResponse } from "../../api";
@@ -163,5 +164,252 @@ describe("ProjectTranslationsPanel permission gating (OXR-55)", () => {
       ).toBeInTheDocument();
     });
     expect(screen.queryByDisplayValue("Save")).not.toBeInTheDocument();
+  });
+});
+
+describe("ProjectTranslationsPanel new-key draft stability (OXR-62)", () => {
+  const ownerProject: Project = { ...project, owner_user_id: "owner-1", is_owner: true };
+  const twoNamespaces: Namespace[] = [
+    ...namespaces,
+    {
+      id: "namespace-2",
+      project_id: project.id,
+      name: "other",
+      created_at: "2026-08-06T00:00:00Z",
+      updated_at: "2026-08-06T00:00:00Z",
+    },
+  ];
+  const emptyGridResponse: TranslationGridResponse = { items: [], total: 0, page: 1, page_size: 25 };
+
+  function renderDraftPanel() {
+    const createCalls: unknown[] = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+
+      if (path === "/api/v1/me/permissions") {
+        return Promise.resolve(jsonResponse({ permissions: [] }));
+      }
+      if (path === "/api/v1/projects/demo-project/translations/grid") {
+        return Promise.resolve(jsonResponse(emptyGridResponse));
+      }
+      if (path === "/api/v1/projects/demo-project/translations" && init?.method === "POST") {
+        createCalls.push(init.body ? JSON.parse(String(init.body)) : null);
+        return Promise.resolve(
+          jsonResponse(
+            {
+              id: "new-value-1",
+              translation_key_id: "new-key-1",
+              key: "greeting.hello",
+              description: null,
+              namespace: "common",
+              language_code: "en",
+              environment_slug: "production",
+              value: "Hello",
+              updated_by_user_id: null,
+              created_at: "2026-08-06T00:00:00Z",
+              updated_at: "2026-08-06T00:00:00Z",
+            },
+            201,
+          ),
+        );
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <I18nProvider>
+          <ProjectTranslationsPanel
+            environments={environments}
+            languages={languages}
+            namespaces={twoNamespaces}
+            project={ownerProject}
+            projectSlug={ownerProject.slug}
+          />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+
+    return { fetchMock, createCalls };
+  }
+
+  it("does not submit a partial draft when focus moves outside the grid", async () => {
+    const user = userEvent.setup();
+    const { createCalls } = renderDraftPanel();
+
+    const keyInput = await screen.findByPlaceholderText("translation.key");
+    await user.type(keyInput, "greeting.hello");
+    const valueInput = screen.getByPlaceholderText("Value (en)");
+    await user.type(valueInput, "Hello");
+
+    // Click something entirely outside the grid (the search field), the way clicking
+    // the "visible languages" dropdown or any other toolbar control would. userEvent
+    // fires a real blur (with relatedTarget set) on the value input first, exercising
+    // whatever the grid wires up for "focus left the grid" the same way a browser would.
+    await user.click(screen.getByPlaceholderText("Find keys or descriptions"));
+
+    expect(createCalls).toHaveLength(0);
+    expect(keyInput).toHaveValue("greeting.hello");
+    expect(valueInput).toHaveValue("Hello");
+  });
+
+  it("saves a new key only through the explicit Save action, and the Add action stays available", async () => {
+    const user = userEvent.setup();
+    const { createCalls } = renderDraftPanel();
+
+    const keyInput = await screen.findByPlaceholderText("translation.key");
+    await user.type(keyInput, "greeting.hello");
+    await user.type(screen.getByPlaceholderText("Value (en)"), "Hello");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(createCalls).toEqual([
+        expect.objectContaining({ key: "greeting.hello", value: "Hello" }),
+      ]);
+    });
+
+    // The row-adding affordance (header "+" button) and a fresh empty draft row must
+    // both still be present, so a second key can be added right away.
+    expect(screen.getByRole("button", { name: "+" })).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("translation.key")).toHaveValue("");
+  });
+
+  it("clears an in-progress draft when the namespace changes", async () => {
+    renderDraftPanel();
+
+    const keyInput = await screen.findByPlaceholderText("translation.key");
+    fireEvent.change(keyInput, { target: { value: "leaked.key" } });
+    expect(keyInput).toHaveValue("leaked.key");
+
+    fireEvent.change(screen.getByLabelText("Namespace"), { target: { value: "other" } });
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("translation.key")).toHaveValue("");
+    });
+  });
+});
+
+describe("ProjectTranslationsPanel base/target language clarity (OXR-72)", () => {
+  const ownerProject: Project = { ...project, owner_user_id: "owner-1", is_owner: true };
+  const threeLanguages: Language[] = [
+    { ...languages[0], code: "en", name: "English" },
+    { id: "language-2", project_id: project.id, code: "ru", name: "Russian", created_at: "2026-08-06T00:00:00Z", updated_at: "2026-08-06T00:00:00Z" },
+    { id: "language-3", project_id: project.id, code: "srb", name: "Serbian", created_at: "2026-08-06T00:00:00Z", updated_at: "2026-08-06T00:00:00Z" },
+  ];
+
+  // key.cancel is missing "ru" only; key.save is missing "srb" only.
+  function gridFor(missingLanguages: string[]): TranslationGridResponse {
+    const wantsRu = missingLanguages.includes("ru");
+    const wantsSrb = missingLanguages.includes("srb");
+    const items = [];
+    if (wantsRu) {
+      items.push({
+        representative_translation_id: "value-cancel",
+        translation_key_id: "key-cancel",
+        key: "button.cancel",
+        description: null,
+        namespace: "common",
+        values: { en: { id: "value-cancel", value: "Cancel" } },
+      });
+    }
+    if (wantsSrb) {
+      items.push({
+        representative_translation_id: "value-save",
+        translation_key_id: "key-save",
+        key: "button.save",
+        description: null,
+        namespace: "common",
+        values: { en: { id: "value-save", value: "Save" } },
+      });
+    }
+    return { items, total: items.length, page: 1, page_size: 25 };
+  }
+
+  function renderMissingModePanel() {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      const path = url.pathname;
+
+      if (path === "/api/v1/me/permissions") {
+        return Promise.resolve(jsonResponse({ permissions: [] }));
+      }
+      if (path === "/api/v1/projects/demo-project/translations/grid") {
+        const missingLanguages = (url.searchParams.get("missing_languages") ?? "").split(",").filter(Boolean);
+        return Promise.resolve(jsonResponse(gridFor(missingLanguages)));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <I18nProvider>
+          <ProjectTranslationsPanel
+            environments={environments}
+            languages={threeLanguages}
+            namespaces={namespaces}
+            project={ownerProject}
+            projectSlug={ownerProject.slug}
+          />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+
+    return { fetchMock };
+  }
+
+  async function switchToMissingMode(user: ReturnType<typeof userEvent.setup>) {
+    await user.selectOptions(screen.getByLabelText("View"), "missing");
+  }
+
+  it("does not list the base language as a target option", async () => {
+    const user = userEvent.setup();
+    renderMissingModePanel();
+    await switchToMissingMode(user);
+
+    await user.click(screen.getByRole("button", { name: /ru/ }));
+
+    expect(screen.queryByText("en · English", { selector: ".dropdown-option span" })).not.toBeInTheDocument();
+    expect(screen.getByText("ru · Russian", { selector: ".dropdown-option span" })).toBeInTheDocument();
+    expect(screen.getByText("srb · Serbian", { selector: ".dropdown-option span" })).toBeInTheDocument();
+  });
+
+  it("focusing a target language narrows the grid without discarding the other selected targets", async () => {
+    const user = userEvent.setup();
+    renderMissingModePanel();
+    await switchToMissingMode(user);
+
+    // select both "ru" and "srb" as targets
+    await user.click(screen.getByRole("button", { name: /ru/ }));
+    await user.click(screen.getByLabelText("srb · Serbian"));
+    await user.click(screen.getByRole("button", { name: /ru/ })); // close the dropdown
+
+    expect(await screen.findByText("button.cancel")).toBeInTheDocument();
+    expect(screen.getByText("button.save")).toBeInTheDocument();
+
+    // focus the "ru" column
+    const ruHeader = screen.getByRole("columnheader", { name: /^ru/ });
+    await user.click(within(ruHeader).getByRole("button", { name: "Focus" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("button.save")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("button.cancel")).toBeInTheDocument();
+
+    // both targets must still be selected underneath the focus
+    await user.click(screen.getByRole("button", { name: /ru/ }));
+    expect(screen.getByLabelText("ru · Russian")).toBeChecked();
+    expect(screen.getByLabelText("srb · Serbian")).toBeChecked();
+    await user.click(screen.getByRole("button", { name: /ru/ }));
+
+    // clearing focus restores both rows
+    await user.click(screen.getByRole("button", { name: "Clear focus" }));
+    await waitFor(() => {
+      expect(screen.getByText("button.save")).toBeInTheDocument();
+    });
+    expect(screen.getByText("button.cancel")).toBeInTheDocument();
   });
 });

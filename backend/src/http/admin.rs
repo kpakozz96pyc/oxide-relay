@@ -1,9 +1,11 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{StatusCode, header::SET_COOKIE},
+    response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
+use sqlx::{Sqlite, SqliteConnection, SqlitePool, pool::PoolConnection};
 use tracing::info;
 use utoipa::{IntoParams, ToSchema};
 
@@ -119,23 +121,37 @@ pub async fn update_user(
     auth::require_permission(&state, &actor.id, "ManageUsers").await?;
     validate_update_user(&payload)?;
 
-    if payload.is_active == Some(false) {
-        guard_last_active_administrator(&state, &user_id).await?;
+    let mut connection = begin_immediate(&state.pool).await?;
+
+    let result = async {
+        if payload.is_active == Some(false) {
+            guard_last_active_administrator_in_connection(&mut connection, &user_id).await?;
+        }
+
+        users::update_in_connection(
+            &mut connection,
+            &user_id,
+            users::UpdateUserInput {
+                email: payload.email.as_deref(),
+                password: payload.password.as_deref(),
+                display_name: payload.display_name.as_deref(),
+                is_active: payload.is_active,
+            },
+        )
+        .await
     }
+    .await;
 
-    let record = users::update(
-        &state.pool,
-        &user_id,
-        users::UpdateUserInput {
-            email: payload.email.as_deref(),
-            password: payload.password.as_deref(),
-            display_name: payload.display_name.as_deref(),
-            is_active: payload.is_active,
-        },
-    )
-    .await?;
-
-    Ok(Json(UserResponse::from(record)))
+    match result {
+        Ok(record) => {
+            commit(connection).await?;
+            Ok(Json(UserResponse::from(record)))
+        }
+        Err(error) => {
+            rollback(connection).await;
+            Err(error)
+        }
+    }
 }
 
 #[utoipa::path(
@@ -148,11 +164,35 @@ pub async fn delete_user(
     State(state): State<AppState>,
     actor: AuthenticatedUser,
     Path(user_id): Path<String>,
-) -> AppResult<StatusCode> {
+) -> AppResult<impl IntoResponse> {
     auth::require_permission(&state, &actor.id, "ManageUsers").await?;
-    guard_last_active_administrator(&state, &user_id).await?;
-    users::delete(&state.pool, &user_id).await?;
-    Ok(StatusCode::NO_CONTENT)
+
+    let mut connection = begin_immediate(&state.pool).await?;
+
+    let result = async {
+        guard_last_active_administrator_in_connection(&mut connection, &user_id).await?;
+        users::delete_in_connection(&mut connection, &user_id).await
+    }
+    .await;
+
+    if let Err(error) = result {
+        rollback(connection).await;
+        return Err(error);
+    }
+    commit(connection).await?;
+
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    if user_id == actor.id {
+        // The actor just deleted their own account: the session row was cascade-deleted
+        // with the user, but the browser still holds a cookie for it. Clear it explicitly
+        // so the next request is unauthenticated instead of relying on a later 401.
+        response.headers_mut().insert(
+            SET_COOKIE,
+            auth::clear_session_cookie(&state.session.cookie_name, state.session.cookie_secure)?,
+        );
+    }
+
+    Ok(response)
 }
 
 #[utoipa::path(
@@ -258,16 +298,34 @@ pub async fn replace_user_permissions(
 ) -> AppResult<StatusCode> {
     auth::require_permission(&state, &actor.id, "ManagePermissions").await?;
 
-    let keeps_manage_users = payload
-        .permission_codes
-        .iter()
-        .any(|code| code.trim() == "ManageUsers");
-    if !keeps_manage_users {
-        guard_last_active_administrator(&state, &user_id).await?;
-    }
+    let normalized = permissions::normalize_codes(&payload.permission_codes);
+    let keeps_manage_users = normalized.iter().any(|code| code == "ManageUsers");
+    // Resolving catalog ids is unrelated to the last-admin invariant, so it can happen
+    // before the write lock is acquired.
+    let permission_ids = permissions::resolve_ids(&state.pool, &normalized).await?;
 
-    permissions::replace_for_user(&state.pool, &user_id, &payload.permission_codes).await?;
-    Ok(StatusCode::NO_CONTENT)
+    let mut connection = begin_immediate(&state.pool).await?;
+
+    let result = async {
+        if !keeps_manage_users {
+            guard_last_active_administrator_in_connection(&mut connection, &user_id).await?;
+        }
+
+        permissions::replace_for_user_in_connection(&mut connection, &user_id, &permission_ids)
+            .await
+    }
+    .await;
+
+    match result {
+        Ok(()) => {
+            commit(connection).await?;
+            Ok(StatusCode::NO_CONTENT)
+        }
+        Err(error) => {
+            rollback(connection).await;
+            Err(error)
+        }
+    }
 }
 
 #[utoipa::path(
@@ -452,21 +510,33 @@ async fn require_any_admin_permission(state: &AppState, user_id: &str) -> AppRes
 
 /// Blocks removing, deactivating, or stripping ManageUsers from `user_id` when doing so
 /// would leave the system with no active user holding ManageUsers.
-async fn guard_last_active_administrator(state: &AppState, user_id: &str) -> AppResult<()> {
-    let target = users::find_by_id(&state.pool, user_id).await?;
+///
+/// Must be called on a connection that already holds SQLite's write lock (see
+/// [`begin_immediate`]) and re-checked inside the same transaction as the write it guards.
+/// Checking against the pool instead would leave a check-then-act gap: two concurrent
+/// deactivate/delete/permission-strip requests could each read "one other admin remains"
+/// before either write commits, and both would proceed, leaving zero administrators.
+async fn guard_last_active_administrator_in_connection(
+    connection: &mut SqliteConnection,
+    user_id: &str,
+) -> AppResult<()> {
+    let target = users::find_by_id_in_connection(connection, user_id).await?;
     if !target.is_active {
         return Ok(());
     }
 
     let has_manage_users =
-        permissions::user_has_permission(&state.pool, user_id, "ManageUsers").await?;
+        permissions::user_has_permission_in_connection(connection, user_id, "ManageUsers").await?;
     if !has_manage_users {
         return Ok(());
     }
 
-    let remaining_admins =
-        permissions::count_other_active_users_with_permission(&state.pool, user_id, "ManageUsers")
-            .await?;
+    let remaining_admins = permissions::count_other_active_users_with_permission_in_connection(
+        connection,
+        user_id,
+        "ManageUsers",
+    )
+    .await?;
     if remaining_admins == 0 {
         return Err(ApiError::validation(
             "Cannot remove the last active administrator. At least one active user must keep the ManageUsers permission.",
@@ -474,6 +544,36 @@ async fn guard_last_active_administrator(state: &AppState, user_id: &str) -> App
     }
 
     Ok(())
+}
+
+/// Acquires a pooled connection and starts a write transaction with `BEGIN IMMEDIATE`,
+/// taking SQLite's write lock immediately instead of on first write. This serializes
+/// concurrent admin mutations so a guard check (e.g. [`guard_last_active_administrator_in_connection`])
+/// and its paired write always observe and commit a consistent state together.
+async fn begin_immediate(pool: &SqlitePool) -> AppResult<PoolConnection<Sqlite>> {
+    let mut connection = pool
+        .acquire()
+        .await
+        .map_err(|e| ApiError::from_sqlx(e, "Unable to start the operation."))?;
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *connection)
+        .await
+        .map_err(|e| ApiError::from_sqlx(e, "Unable to start the operation."))?;
+
+    Ok(connection)
+}
+
+async fn commit(mut connection: PoolConnection<Sqlite>) -> AppResult<()> {
+    sqlx::query("COMMIT")
+        .execute(&mut *connection)
+        .await
+        .map_err(|e| ApiError::from_sqlx(e, "Unable to commit the operation."))?;
+    Ok(())
+}
+
+async fn rollback(mut connection: PoolConnection<Sqlite>) {
+    let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
 }
 
 fn validate_update_user(payload: &UpdateUserRequest) -> AppResult<()> {

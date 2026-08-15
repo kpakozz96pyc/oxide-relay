@@ -1809,6 +1809,194 @@ async fn last_active_administrator_cannot_be_removed_deactivated_or_stripped_of_
 }
 
 #[tokio::test]
+async fn concurrent_admin_removal_requests_cannot_both_bypass_the_last_admin_guard() {
+    let harness = TestHarness::new().await;
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+
+    let list_users = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/users")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    let users = json_body(list_users).await;
+    let admin_id = users
+        .as_array()
+        .expect("users array")
+        .iter()
+        .find(|user| user["email"] == "admin@example.com")
+        .expect("bootstrap admin")["id"]
+        .as_str()
+        .expect("admin id")
+        .to_owned();
+
+    let second_admin_id = harness
+        .insert_user("second-admin@example.com", "second-password", "Second Admin", true)
+        .await;
+    let grant_second_admin = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{second_admin_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({ "permission_codes": ["ManageUsers"] }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(grant_second_admin.status(), StatusCode::NO_CONTENT);
+
+    let second_admin_cookie = harness
+        .login("second-admin@example.com", "second-password")
+        .await;
+
+    // Race two mutations that each independently pass a naive, non-transactional
+    // "one other admin remains" check: the first admin deactivates the second admin while,
+    // at the same time, the second admin deletes the first admin. If the guard and its
+    // paired write aren't serialized under the same write lock, both requests can read
+    // "one other admin remains" before either write lands, and both succeed — leaving zero
+    // active administrators. With the fix, exactly one must win and the other must be
+    // blocked after observing the winner's committed effect.
+    let deactivate_second = harness.request(
+        Request::builder()
+            .method("PUT")
+            .uri(format!("/api/v1/users/{second_admin_id}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::COOKIE, admin_cookie.as_str())
+            .body(Body::from(json!({ "is_active": false }).to_string()))
+            .expect("request"),
+    );
+    let delete_first = harness.request(
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/v1/users/{admin_id}"))
+            .header(header::COOKIE, second_admin_cookie.as_str())
+            .body(Body::empty())
+            .expect("request"),
+    );
+
+    let (deactivate_response, delete_response) = tokio::join!(deactivate_second, delete_first);
+
+    let statuses = [deactivate_response.status(), delete_response.status()];
+    let success_count = statuses.iter().filter(|status| status.is_success()).count();
+
+    // Exactly one side may win. The loser is blocked either by the transactional
+    // last-admin guard (400, if its request reaches the handler after the winner commits)
+    // or by authentication itself (401, if the winner's write deactivates/deletes the
+    // loser's own actor account before the loser's session is re-validated) — both outcomes
+    // prove the invariant held, so either is an acceptable "safe" result here. What matters
+    // is asserted below directly against the database: at least one active administrator
+    // must always remain.
+    assert_eq!(success_count, 1, "exactly one racing operation must succeed");
+    assert!(
+        statuses
+            .iter()
+            .any(|status| *status == StatusCode::BAD_REQUEST || *status == StatusCode::UNAUTHORIZED),
+        "the other racing operation must be blocked, got {statuses:?}"
+    );
+
+    let remaining_admins: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM users u
+        JOIN user_permissions up ON up.user_id = u.id
+        JOIN permissions p ON p.id = up.permission_id
+        WHERE u.is_active = 1 AND p.code = 'ManageUsers'
+        "#,
+    )
+    .fetch_one(&harness.pool)
+    .await
+    .expect("count admins");
+
+    assert_eq!(
+        remaining_admins, 1,
+        "the last-admin invariant must never be bypassed by racing requests"
+    );
+}
+
+#[tokio::test]
+async fn self_deletion_clears_the_session_cookie_and_signs_the_actor_out() {
+    let harness = TestHarness::new().await;
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+
+    // A second administrator is required so that self-deletion isn't blocked by the
+    // last-admin guard itself.
+    let second_admin_id = harness
+        .insert_user("second-admin@example.com", "second-password", "Second Admin", true)
+        .await;
+    let grant_second_admin = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{second_admin_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({ "permission_codes": ["ManageUsers"] }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(grant_second_admin.status(), StatusCode::NO_CONTENT);
+
+    let second_admin_cookie = harness
+        .login("second-admin@example.com", "second-password")
+        .await;
+
+    let me_before_delete = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/me")
+                .header(header::COOKIE, second_admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(me_before_delete.status(), StatusCode::OK);
+
+    let self_delete = harness
+        .request(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/users/{second_admin_id}"))
+                .header(header::COOKIE, second_admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(self_delete.status(), StatusCode::NO_CONTENT);
+
+    // The response must clear the session cookie in the browser...
+    let cleared_cookie = self_delete
+        .headers()
+        .get(header::SET_COOKIE)
+        .expect("set-cookie on self-delete")
+        .to_str()
+        .expect("cookie string");
+    assert!(cleared_cookie.contains("Max-Age=0"));
+
+    // ...and the now-deleted session must be rejected immediately, not just eventually.
+    let me_after_delete = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/me")
+                .header(header::COOKIE, second_admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(me_after_delete.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn login_rate_limit_blocks_attempts_after_the_fifteenth_failure() {
     let harness = TestHarness::new().await;
     let identifier_hash = oxiderelay_backend::util::sha256_hex("admin@example.com");

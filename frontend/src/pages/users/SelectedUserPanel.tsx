@@ -13,6 +13,7 @@ import {
   apiPut,
   buildErrorMessage,
 } from "../../api";
+import { useSession } from "../../hooks/useSession";
 import { buildPermissionGroups } from "./permissionGroups";
 
 const INSPECTOR_TABS = [
@@ -48,6 +49,7 @@ export function SelectedUserPanel({
   onDeleted: () => void;
 }) {
   const queryClient = useQueryClient();
+  const session = useSession();
   const [activeTab, setActiveTab] = useState<InspectorTab>("profile");
   const [profileEmail, setProfileEmail] = useState("");
   const [profileDisplayName, setProfileDisplayName] = useState("");
@@ -191,6 +193,13 @@ export function SelectedUserPanel({
       return apiDelete(`/api/v1/users/${selectedUser.id}`);
     },
     onSuccess: async () => {
+      if (selectedUser && selectedUser.id === session.user?.id) {
+        // Deleted our own account: the server already cleared the session cookie.
+        // Clear the cached session immediately so the app redirects to /login
+        // instead of leaving this page rendered with dead auth state.
+        queryClient.setQueryData(["session"], null);
+        return;
+      }
       await queryClient.invalidateQueries({ queryKey: ["users-summary"] });
       await queryClient.invalidateQueries({ queryKey: ["users"] });
       onDeleted();

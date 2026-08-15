@@ -249,7 +249,7 @@ export function ProjectTranslationsPanel({
     }: {
       translationValueId: string;
       value?: string;
-      description?: string | null;
+      description?: string;
     }) =>
       apiPut(`/api/v1/projects/${projectSlug}/translations/${translationValueId}`, {
         value,
@@ -366,7 +366,7 @@ export function ProjectTranslationsPanel({
     try {
       await updateMutation.mutateAsync({
         translationValueId: row.representative_translation_id,
-        description: nextDescription || null,
+        description: nextDescription,
       });
       flashCellSaved(draftKey);
     } catch (error) {

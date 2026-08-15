@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     errors::{ApiError, AppResult},
+    translation_validation::{validate_translation_key, validate_translation_value},
     util::{now_utc, optional_trimmed},
 };
 
@@ -511,6 +512,15 @@ pub async fn import_batch(
     entries: &[(String, String)],
     user_id: &str,
 ) -> AppResult<usize> {
+    let entries = entries
+        .iter()
+        .map(|(key, value)| {
+            let key = validate_translation_key(key, namespace_name)?;
+            let value = validate_translation_value(value, Some(key))?;
+            Ok(ImportEntry { key, value })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+
     let mut tx = pool
         .begin()
         .await
@@ -520,20 +530,9 @@ pub async fn import_batch(
     let now = now_utc()?;
     let mut imported = 0usize;
 
-    for (key, value) in entries {
-        let key = key.trim();
-        let value = value.trim();
-        if key.is_empty() || value.is_empty() || key.contains('{') {
-            continue;
-        }
-        if key.contains(':') || key.starts_with(&format!("{}.", refs.namespace_name)) {
-            return Err(ApiError::validation(
-                "Import keys must be local to the selected namespace and must not include a namespace prefix.",
-            ));
-        }
-
+    for entry in entries {
         let translation_key_id =
-            find_or_create_key(&mut tx, project_id, &refs.namespace_id, key, None, &now)
+            find_or_create_key(&mut tx, project_id, &refs.namespace_id, entry.key, None, &now)
                 .await?;
 
         sqlx::query(
@@ -554,7 +553,7 @@ pub async fn import_batch(
         .bind(&translation_key_id)
         .bind(&refs.language_id)
         .bind(&refs.environment_id)
-        .bind(value)
+        .bind(entry.value)
         .bind(user_id)
         .bind(&now)
         .bind(&now)

@@ -980,6 +980,25 @@ th {
   margin-bottom: var(--space-4);
 }
 
+.sidebar-secondary-links {
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px dotted var(--border-dotted);
+}
+
+.sidebar-secondary-links a {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  transition: color var(--dur-fast) ease;
+}
+
+.sidebar-secondary-links a:hover {
+  color: var(--text-secondary);
+}
+
 .user-meta-stack {
   display: flex;
   flex-direction: column;

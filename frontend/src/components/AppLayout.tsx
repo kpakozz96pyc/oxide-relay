@@ -49,10 +49,6 @@ export function AppLayout(props: {
                 {t("nav.users")}
               </Link>
             ) : null}
-            <a href="/api/openapi.json" target="_blank" rel="noreferrer">
-              <FileCode size={16} />
-              {t("nav.openapi")}
-            </a>
           </nav>
         </div>
 
@@ -86,6 +82,12 @@ export function AppLayout(props: {
             <LogOut size={14} />
             {t("layout.logout")}
           </button>
+          <div className="sidebar-secondary-links">
+            <a href="/api/openapi.json" target="_blank" rel="noreferrer">
+              <FileCode size={14} />
+              {t("nav.openapi")}
+            </a>
+          </div>
         </div>
       </aside>
 

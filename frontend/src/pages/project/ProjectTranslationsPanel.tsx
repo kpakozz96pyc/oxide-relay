@@ -900,8 +900,12 @@ export function ProjectTranslationsPanel({
                       const missingPlaceholders = placeholderGaps[languageCode];
                       const placeholderWarningClassName = missingPlaceholders ? " has-placeholder-gap" : "";
                       const errorTitle = cellState?.status === "error" ? cellState.message : undefined;
+                      const placeholderNames = missingPlaceholders?.map((name) => `{${name}}`).join(", ");
                       const placeholderTitle = missingPlaceholders
-                        ? `${t("project.table.placeholder_gap")} ${missingPlaceholders.map((name) => `{${name}}`).join(", ")}`
+                        ? `${t("project.table.placeholder_gap")} ${placeholderNames}`
+                        : undefined;
+                      const placeholderGapId = missingPlaceholders
+                        ? `placeholder-gap:${translation.translation_key_id}:${languageCode}`
                         : undefined;
                       return (
                         <td
@@ -910,6 +914,7 @@ export function ProjectTranslationsPanel({
                         >
                           <div className="grid-cell">
                             <input
+                              aria-describedby={placeholderGapId}
                               className={`${focusedCell === draftKey ? "grid-input is-focused" : "grid-input"}${emptyClassName}${cellStatusClassName(cellState?.status)}${placeholderWarningClassName}`}
                               data-grid-focus="true"
                               disabled={!canUpdateTranslation}
@@ -943,11 +948,18 @@ export function ProjectTranslationsPanel({
                               />
                             ) : null}
                             {missingPlaceholders ? (
-                              <span
-                                aria-hidden="true"
-                                className="cell-status-dot corner-left is-placeholder-gap"
-                                title={placeholderTitle}
-                              />
+                              <>
+                                <span
+                                  aria-hidden="true"
+                                  className="cell-status-dot corner-left is-placeholder-gap"
+                                  title={placeholderTitle}
+                                >
+                                  !
+                                </span>
+                                <span className="sr-only" id={placeholderGapId} role="status">
+                                  {placeholderTitle}
+                                </span>
+                              </>
                             ) : null}
                           </div>
                         </td>

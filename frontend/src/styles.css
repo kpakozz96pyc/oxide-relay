@@ -321,7 +321,27 @@ th {
 }
 
 .cell-status-dot.is-placeholder-gap {
+  width: 12px;
+  height: 12px;
+  top: 4px;
   background: var(--color-warning-text);
+  color: var(--surface);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 12px;
+  text-align: center;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .grid-input.has-placeholder-gap:not(:focus) {

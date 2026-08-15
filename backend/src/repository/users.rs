@@ -95,6 +95,24 @@ pub async fn find_by_id(pool: &SqlitePool, user_id: &str) -> AppResult<UserRecor
     .ok_or_else(|| ApiError::not_found("User was not found."))
 }
 
+pub async fn find_by_id_in_connection(
+    connection: &mut SqliteConnection,
+    user_id: &str,
+) -> AppResult<UserRecord> {
+    sqlx::query_as::<_, UserRecord>(
+        r#"
+        SELECT id, email, display_name, is_active, created_at, updated_at
+        FROM users
+        WHERE id = ?1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to load the user."))?
+    .ok_or_else(|| ApiError::not_found("User was not found."))
+}
+
 pub async fn find_row_by_id(pool: &SqlitePool, user_id: &str) -> AppResult<UserRow> {
     sqlx::query_as::<_, UserRow>(
         r#"
@@ -333,12 +351,14 @@ pub async fn create(pool: &SqlitePool, input: CreateUserInput<'_>) -> AppResult<
     })
 }
 
-pub async fn update(
-    pool: &SqlitePool,
+/// Updates a user using the caller's connection. Intended for use inside a write transaction
+/// that also re-checks invariants (e.g. the last-active-administrator guard) before committing.
+pub async fn update_in_connection(
+    connection: &mut SqliteConnection,
     user_id: &str,
     input: UpdateUserInput<'_>,
 ) -> AppResult<UserRecord> {
-    let existing = find_by_id(pool, user_id).await?;
+    let existing = find_by_id_in_connection(connection, user_id).await?;
     let updated_at = now_utc()?;
 
     let email = input
@@ -375,7 +395,7 @@ pub async fn update(
     .bind(if is_active { 1 } else { 0 })
     .bind(&updated_at)
     .bind(user_id)
-    .execute(pool)
+    .execute(&mut *connection)
     .await
     .map_err(|e| ApiError::from_sqlx(e, "User email already exists."))?;
 
@@ -389,10 +409,15 @@ pub async fn update(
     })
 }
 
-pub async fn delete(pool: &SqlitePool, user_id: &str) -> AppResult<()> {
+/// Deletes a user using the caller's connection. Intended for use inside a write transaction
+/// that also re-checks invariants (e.g. the last-active-administrator guard) before committing.
+pub async fn delete_in_connection(
+    connection: &mut SqliteConnection,
+    user_id: &str,
+) -> AppResult<()> {
     let result = sqlx::query("DELETE FROM users WHERE id = ?1")
         .bind(user_id)
-        .execute(pool)
+        .execute(&mut *connection)
         .await
         .map_err(|e| ApiError::from_sqlx(e, "Unable to delete the user."))?;
 

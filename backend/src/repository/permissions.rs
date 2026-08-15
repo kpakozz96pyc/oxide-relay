@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use sqlx::{FromRow, Row, SqlitePool};
+use sqlx::{FromRow, Row, SqliteConnection, SqlitePool};
 
 use crate::errors::{ApiError, AppResult};
 
@@ -79,6 +79,29 @@ pub async fn user_has_permission(
     Ok(count > 0)
 }
 
+pub async fn user_has_permission_in_connection(
+    connection: &mut SqliteConnection,
+    user_id: &str,
+    permission_code: &str,
+) -> AppResult<bool> {
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM user_permissions up
+        JOIN permissions p ON p.id = up.permission_id
+        WHERE up.user_id = ?1
+          AND p.code = ?2
+        "#,
+    )
+    .bind(user_id)
+    .bind(permission_code)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to resolve permissions."))?;
+
+    Ok(count > 0)
+}
+
 /// Count active users other than `excluded_user_id` who hold `permission_code`.
 pub async fn count_other_active_users_with_permission(
     pool: &SqlitePool,
@@ -103,6 +126,32 @@ pub async fn count_other_active_users_with_permission(
     .map_err(|e| ApiError::from_sqlx(e, "Unable to count active administrators."))
 }
 
+/// Connection-scoped variant of [`count_other_active_users_with_permission`] for use inside a
+/// write transaction that already holds SQLite's write lock, so the count reflects a
+/// consistent, race-free view of the data it is about to be checked against.
+pub async fn count_other_active_users_with_permission_in_connection(
+    connection: &mut SqliteConnection,
+    excluded_user_id: &str,
+    permission_code: &str,
+) -> AppResult<i64> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM users u
+        JOIN user_permissions up ON up.user_id = u.id
+        JOIN permissions p ON p.id = up.permission_id
+        WHERE u.is_active = 1
+          AND p.code = ?1
+          AND u.id != ?2
+        "#,
+    )
+    .bind(permission_code)
+    .bind(excluded_user_id)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to count active administrators."))
+}
+
 /// Replace all permissions for `user_id` with the given codes.
 /// Returns an error if any code is not in the seeded catalog.
 pub async fn replace_for_user(
@@ -110,11 +159,7 @@ pub async fn replace_for_user(
     user_id: &str,
     permission_codes: &[String],
 ) -> AppResult<()> {
-    let normalized: Vec<String> = permission_codes
-        .iter()
-        .map(|c| c.trim().to_owned())
-        .filter(|c| !c.is_empty())
-        .collect();
+    let normalized = normalize_codes(permission_codes);
 
     // Resolve IDs from the catalog
     let permission_ids = resolve_ids(pool, &normalized).await?;
@@ -124,9 +169,26 @@ pub async fn replace_for_user(
         .await
         .map_err(|e| ApiError::from_sqlx(e, "Unable to start permission update."))?;
 
+    replace_for_user_in_connection(&mut tx, user_id, &permission_ids).await?;
+
+    tx.commit()
+        .await
+        .map_err(|e| ApiError::from_sqlx(e, "Unable to commit permission update."))?;
+
+    Ok(())
+}
+
+/// Replace all permissions for `user_id` with the given (already resolved) permission ids,
+/// using the caller's connection. Intended for use inside a write transaction that also
+/// re-checks invariants (e.g. the last-active-administrator guard) before committing.
+pub async fn replace_for_user_in_connection(
+    connection: &mut SqliteConnection,
+    user_id: &str,
+    permission_ids: &[String],
+) -> AppResult<()> {
     sqlx::query("DELETE FROM user_permissions WHERE user_id = ?1")
         .bind(user_id)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await
         .map_err(|e| ApiError::from_sqlx(e, "Unable to clear user permissions."))?;
 
@@ -139,19 +201,24 @@ pub async fn replace_for_user(
         )
         .bind(user_id)
         .bind(permission_id)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await
         .map_err(|e| ApiError::from_sqlx(e, "Unable to assign user permissions."))?;
     }
 
-    tx.commit()
-        .await
-        .map_err(|e| ApiError::from_sqlx(e, "Unable to commit permission update."))?;
-
     Ok(())
 }
 
-async fn resolve_ids(pool: &SqlitePool, codes: &[String]) -> AppResult<Vec<String>> {
+pub fn normalize_codes(codes: &[String]) -> Vec<String> {
+    codes
+        .iter()
+        .map(|c| c.trim().to_owned())
+        .filter(|c| !c.is_empty())
+        .collect()
+}
+
+/// Resolve permission codes to catalog ids. Errors if any code is unknown.
+pub async fn resolve_ids(pool: &SqlitePool, codes: &[String]) -> AppResult<Vec<String>> {
     if codes.is_empty() {
         return Ok(vec![]);
     }

@@ -395,7 +395,10 @@ fn build_session_cookie(
     .map_err(|_| ApiError::internal("Unable to serialize the session cookie."))
 }
 
-fn clear_session_cookie(cookie_name: &str, cookie_secure: bool) -> AppResult<HeaderValue> {
+pub(crate) fn clear_session_cookie(
+    cookie_name: &str,
+    cookie_secure: bool,
+) -> AppResult<HeaderValue> {
     let secure = if cookie_secure { "; Secure" } else { "" };
     HeaderValue::from_str(&format!(
         "{cookie_name}=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax{secure}"

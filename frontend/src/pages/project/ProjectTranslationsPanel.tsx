@@ -60,6 +60,10 @@ export function ProjectTranslationsPanel({
   const [page, setPage] = useState(1);
   const [selectedLanguageCodes, setSelectedLanguageCodes] = useState<string[]>([]);
   const [missingTargetLanguageCodes, setMissingTargetLanguageCodes] = useState<string[]>([]);
+  // Narrows which target(s) the grid actually filters missing rows by, without touching
+  // missingTargetLanguageCodes itself: focusing one target lets a user work through it in
+  // isolation and then return to the full multi-target view exactly where they left off.
+  const [focusedMissingTarget, setFocusedMissingTarget] = useState<string | null>(null);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [cellStates, setCellStates] = useState<Record<string, CellState>>({});
@@ -76,6 +80,14 @@ export function ProjectTranslationsPanel({
     viewMode === "missing"
       ? [language, ...missingTargetLanguageCodes].filter((code, index, codes) => code && codes.indexOf(code) === index)
       : selectedLanguageCodes;
+  // What the grid actually filters "missing" rows by: every selected target normally, or
+  // just the focused one when the user has zoomed into a single target. Columns keep
+  // showing every selected target either way (via displayLanguageCodes above), so focusing
+  // only narrows which rows qualify, not what's visible once they do.
+  const effectiveMissingTargetLanguageCodes =
+    focusedMissingTarget && missingTargetLanguageCodes.includes(focusedMissingTarget)
+      ? [focusedMissingTarget]
+      : missingTargetLanguageCodes;
 
   useEffect(() => {
     if (!environment && environments[0]) {
@@ -113,6 +125,16 @@ export function ProjectTranslationsPanel({
   }, [language, languages]);
 
   useEffect(() => {
+    if (viewMode !== "missing") {
+      setFocusedMissingTarget(null);
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
+    setFocusedMissingTarget((current) => (current && missingTargetLanguageCodes.includes(current) ? current : null));
+  }, [missingTargetLanguageCodes]);
+
+  useEffect(() => {
     if (!namespace && namespaces[0]) {
       setNamespace(namespaces[0].name);
     }
@@ -131,7 +153,7 @@ export function ProjectTranslationsPanel({
     deferredTranslationSearch,
     environment,
     language,
-    missingTargetLanguageCodes.join(","),
+    effectiveMissingTargetLanguageCodes.join(","),
     namespace,
     pageSize,
     selectedLanguageCodes.join(","),
@@ -148,7 +170,7 @@ export function ProjectTranslationsPanel({
       displayLanguageCodes,
       viewMode,
       language,
-      missingTargetLanguageCodes,
+      effectiveMissingTargetLanguageCodes,
       deferredTranslationSearch,
       page,
       pageSize,
@@ -164,7 +186,7 @@ export function ProjectTranslationsPanel({
       });
       if (viewMode === "missing") {
         params.set("base_language", language);
-        params.set("missing_languages", missingTargetLanguageCodes.join(","));
+        params.set("missing_languages", effectiveMissingTargetLanguageCodes.join(","));
       }
       return apiGet<TranslationGridResponse>(
         `/api/v1/projects/${projectSlug}/translations/grid?${params.toString()}`,
@@ -613,8 +635,17 @@ export function ProjectTranslationsPanel({
             </button>
             {languageMenuOpen ? (
               <div className="dropdown-panel">
-                {languages.map((item) => {
-                  const isBaseLanguage = viewMode === "missing" && item.code === language;
+                {viewMode === "missing" ? (
+                  <p className="dropdown-hint muted">
+                    {t("project.missing.target_languages_hint")} <strong>{language}</strong>
+                  </p>
+                ) : null}
+                {languages
+                  // The base language can never be a target of itself; leaving it out of
+                  // this list (rather than showing it as a disabled option) is what makes
+                  // base vs. target unambiguous here.
+                  .filter((item) => !(viewMode === "missing" && item.code === language))
+                  .map((item) => {
                   const isChecked =
                     viewMode === "missing"
                       ? missingTargetLanguageCodes.includes(item.code)
@@ -623,7 +654,6 @@ export function ProjectTranslationsPanel({
                     <label className="dropdown-option" key={item.id}>
                       <input
                         checked={isChecked}
-                        disabled={isBaseLanguage}
                         onChange={() =>
                           viewMode === "missing"
                             ? toggleMissingTargetLanguage(item.code)
@@ -661,6 +691,20 @@ export function ProjectTranslationsPanel({
       {viewMode === "missing" && missingTargetLanguageCodes.length === 0 ? (
         <div className="banner warning">{t("project.missing.no_target_languages")}</div>
       ) : null}
+      {viewMode === "missing" && focusedMissingTarget ? (
+        <div className="banner info missing-focus-banner">
+          <span>
+            {t("project.missing.focused_on")} <strong>{focusedMissingTarget}</strong>
+          </span>
+          <button
+            className="button ghost"
+            onClick={() => setFocusedMissingTarget(null)}
+            type="button"
+          >
+            {t("project.missing.clear_focus")}
+          </button>
+        </div>
+      ) : null}
       {translationsQuery.isLoading ? <p className="muted">{t("project.translations.loading")}</p> : null}
       {translationsQuery.isError ? <div className="banner error">{buildErrorMessage(translationsQuery.error)}</div> : null}
 
@@ -682,14 +726,31 @@ export function ProjectTranslationsPanel({
                   <th>{t("project.table.namespace")}</th>
                   <th>{t("project.table.key")}</th>
                   <th>{t("project.table.description")}</th>
-                  {displayLanguageCodes.map((languageCode) => (
-                    <th key={languageCode}>
-                      {languageCode}
-                      {viewMode === "missing" && languageCode === language ? (
-                        <span className="base-language-label">{t("project.missing.base_badge")}</span>
-                      ) : null}
-                    </th>
-                  ))}
+                  {displayLanguageCodes.map((languageCode) => {
+                    const isBaseColumn = viewMode === "missing" && languageCode === language;
+                    const isFocusableTarget =
+                      viewMode === "missing" && !isBaseColumn && missingTargetLanguageCodes.length > 1;
+                    const isFocused = focusedMissingTarget === languageCode;
+                    return (
+                      <th className={isFocused ? "is-focused-target-column" : undefined} key={languageCode}>
+                        {languageCode}
+                        {isBaseColumn ? (
+                          <span className="base-language-label">{t("project.missing.base_badge")}</span>
+                        ) : null}
+                        {isFocusableTarget ? (
+                          <button
+                            className="button ghost target-focus-toggle"
+                            onClick={() => setFocusedMissingTarget(isFocused ? null : languageCode)}
+                            type="button"
+                          >
+                            {isFocused
+                              ? t("project.missing.unfocus_target")
+                              : t("project.missing.focus_target")}
+                          </button>
+                        ) : null}
+                      </th>
+                    );
+                  })}
                   {viewMode === "all" ? <th>
                     <div className="table-actions-header">
                       <span>{t("project.table.actions")}</span>

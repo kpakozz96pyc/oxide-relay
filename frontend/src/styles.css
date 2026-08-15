@@ -436,6 +436,32 @@ th {
   font-size: var(--text-sm);
 }
 
+.dropdown-hint {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.target-focus-toggle {
+  display: block;
+  margin-top: var(--space-1);
+  padding: 0;
+  font-size: var(--text-xs);
+  font-weight: 400;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.is-focused-target-column {
+  background: var(--color-info-bg);
+}
+
+.missing-focus-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 .pagination-bar {
   display: flex;
   align-items: center;

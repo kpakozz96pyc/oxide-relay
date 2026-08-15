@@ -39,7 +39,7 @@ describe("ProjectDangerZonePanel delete confirmation slug (OXR-66)", () => {
     renderPanel();
 
     const label = screen.getByText("Required slug");
-    const slugRow = label.closest(".field");
+    const slugRow = label.closest<HTMLElement>(".field");
     if (!slugRow) {
       throw new Error("expected the slug label to wrap the value row");
     }

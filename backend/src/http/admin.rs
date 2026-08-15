@@ -432,6 +432,35 @@ pub async fn list_project_members(
 }
 
 #[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_slug}/members/search",
+    params(
+        ("project_slug" = String, Path, description = "Project slug"),
+        ("q" = String, Query, description = "Search text matched against email and display name")
+    ),
+    responses((status = 200, body = [MemberCandidateResponse]))
+)]
+pub async fn search_project_members(
+    State(state): State<AppState>,
+    actor: AuthenticatedUser,
+    Path(project_slug): Path<String>,
+    Query(query): Query<MemberSearchQuery>,
+) -> AppResult<Json<Vec<MemberCandidateResponse>>> {
+    let project =
+        auth::authorize_project(&state, &actor, &project_slug, "ManageProjectMembers").await?;
+
+    let search = query.q.trim();
+    if search.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+
+    let records = members::search_candidates(&state.pool, &project.id, search, 10).await?;
+    Ok(Json(
+        records.into_iter().map(MemberCandidateResponse::from).collect(),
+    ))
+}
+
+#[utoipa::path(
     post,
     path = "/api/v1/projects/{project_slug}/members",
     params(("project_slug" = String, Path, description = "Project slug")),
@@ -759,6 +788,29 @@ impl From<projects::ProjectCatalogRecord> for ProjectCatalogResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AddProjectMemberRequest {
     pub user_id: String,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct MemberSearchQuery {
+    #[serde(default)]
+    pub q: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MemberCandidateResponse {
+    pub id: String,
+    pub email: String,
+    pub display_name: String,
+}
+
+impl From<members::MemberCandidateRecord> for MemberCandidateResponse {
+    fn from(r: members::MemberCandidateRecord) -> Self {
+        Self {
+            id: r.id,
+            email: r.email,
+            display_name: r.display_name,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]

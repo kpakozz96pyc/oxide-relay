@@ -129,6 +129,10 @@ pub fn router(state: AppState, frontend_dist_path: PathBuf) -> Router {
             get(admin::list_project_members).post(admin::add_project_member),
         )
         .route(
+            "/api/v1/projects/{project_slug}/members/search",
+            get(admin::search_project_members),
+        )
+        .route(
             "/api/v1/projects/{project_slug}/members/{user_id}",
             delete(admin::delete_project_member),
         )

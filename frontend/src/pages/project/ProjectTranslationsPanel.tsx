@@ -47,7 +47,7 @@ export function ProjectTranslationsPanel({
   namespaces: Namespace[];
   environments: Environment[];
 }) {
-  const { t } = useTranslation();
+  const { t, tCount } = useTranslation();
   const permissionSet = usePermissionSet();
   const queryClient = useQueryClient();
   const translationGridRef = useRef<HTMLDivElement | null>(null);
@@ -302,6 +302,10 @@ export function ProjectTranslationsPanel({
   const canReadCurrentEnvironment = project.is_owner || permissionSet.has("ReadTranslations");
   const canEditCurrentEnvironment = project.is_owner || permissionSet.has(editEnvironmentPermission(environment));
   const canCreateTranslation = project.is_owner || (permissionSet.has("EditTranslations") && canEditCurrentEnvironment);
+  // Update shares the exact same backend authorization as create (EditTranslations AND
+  // EditProd/EditAll) but is tracked separately so the grid can disable in-place editing
+  // of existing values without touching the "add new key" affordance.
+  const canUpdateTranslation = canCreateTranslation;
   const canDeleteTranslation = project.is_owner || (permissionSet.has("DeleteTranslations") && canEditCurrentEnvironment);
   const translationRows = translationsQuery.data?.items ?? [];
   const totalTranslationRows = translationsQuery.data?.total ?? 0;
@@ -860,6 +864,7 @@ export function ProjectTranslationsPanel({
                         <input
                           className={`${focusedCell === descKey ? "grid-input is-focused" : "grid-input"}${cellStatusClassName(descState?.status)}`}
                           data-grid-focus="true"
+                          disabled={!canUpdateTranslation}
                           onBlur={() => {
                             void commitDescription(translation);
                           }}
@@ -895,8 +900,12 @@ export function ProjectTranslationsPanel({
                       const missingPlaceholders = placeholderGaps[languageCode];
                       const placeholderWarningClassName = missingPlaceholders ? " has-placeholder-gap" : "";
                       const errorTitle = cellState?.status === "error" ? cellState.message : undefined;
+                      const placeholderNames = missingPlaceholders?.map((name) => `{${name}}`).join(", ");
                       const placeholderTitle = missingPlaceholders
-                        ? `${t("project.table.placeholder_gap")} ${missingPlaceholders.map((name) => `{${name}}`).join(", ")}`
+                        ? `${t("project.table.placeholder_gap")} ${placeholderNames}`
+                        : undefined;
+                      const placeholderGapId = missingPlaceholders
+                        ? `placeholder-gap:${translation.translation_key_id}:${languageCode}`
                         : undefined;
                       return (
                         <td
@@ -905,8 +914,10 @@ export function ProjectTranslationsPanel({
                         >
                           <div className="grid-cell">
                             <input
+                              aria-describedby={placeholderGapId}
                               className={`${focusedCell === draftKey ? "grid-input is-focused" : "grid-input"}${emptyClassName}${cellStatusClassName(cellState?.status)}${placeholderWarningClassName}`}
                               data-grid-focus="true"
+                              disabled={!canUpdateTranslation}
                               onBlur={() => {
                                 void commitTranslationValue(translation, languageCode);
                               }}
@@ -937,11 +948,18 @@ export function ProjectTranslationsPanel({
                               />
                             ) : null}
                             {missingPlaceholders ? (
-                              <span
-                                aria-hidden="true"
-                                className="cell-status-dot corner-left is-placeholder-gap"
-                                title={placeholderTitle}
-                              />
+                              <>
+                                <span
+                                  aria-hidden="true"
+                                  className="cell-status-dot corner-left is-placeholder-gap"
+                                  title={placeholderTitle}
+                                >
+                                  !
+                                </span>
+                                <span className="sr-only" id={placeholderGapId} role="status">
+                                  {placeholderTitle}
+                                </span>
+                              </>
                             ) : null}
                           </div>
                         </td>
@@ -991,7 +1009,7 @@ export function ProjectTranslationsPanel({
           ) : null}
           <div className="pagination-bar">
             <span className="muted">
-              {`${t("project.pagination.page")} ${page} ${t("project.pagination.of")} ${totalPages} · ${totalTranslationRows} ${t("project.pagination.terms")}`}
+              {`${t("project.pagination.page")} ${page} ${t("project.pagination.of")} ${totalPages} · ${totalTranslationRows} ${tCount("project.pagination.terms", totalTranslationRows)}`}
             </span>
             <div className="action-row">
               <button

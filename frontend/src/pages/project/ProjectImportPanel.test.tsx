@@ -317,23 +317,60 @@ describe("ProjectImportPanel", () => {
   });
 });
 
-describe("ProjectImportPanel import permission gating (OXR-60)", () => {
-  const deniedBannerText = /Import requires owner access or the/;
+describe("ProjectImportPanel import target context (OXR-73)", () => {
+  it("shows the full project/environment/language/namespace target unambiguously", () => {
+    renderPanel(project);
 
-  it("disables import for a production target when ImportTranslations is held but EditProd is not", () => {
+    const summary = screen.getByRole("status", { name: "" });
+    expect(summary).toHaveTextContent("Demo Project");
+    expect(summary).toHaveTextContent("Production");
+    expect(summary).toHaveTextContent("en");
+    expect(summary).toHaveTextContent("common");
+  });
+
+  it("updates the target summary when the environment selection changes", () => {
+    renderPanel(project);
+
+    fireEvent.change(screen.getByLabelText("Environment"), {
+      target: { value: "development" },
+    });
+
+    expect(screen.getByRole("status", { name: "" })).toHaveTextContent("Development");
+  });
+});
+
+describe("ProjectImportPanel import permission gating (OXR-60)", () => {
+  const deniedBannerText = /Import is unavailable for the current target/;
+
+  it("disables import for a production target when ImportTranslations is held but EditProd is not, and names EditProd specifically", () => {
     mockPermissions = new Set(["ImportTranslations", "EditAll"]);
     renderPanel(nonOwnerProject);
 
     expect(screen.getByText(deniedBannerText)).toBeInTheDocument();
+    // OXR-73: the missing piece must be named explicitly (EditProd here), not folded
+    // into one generic "ImportTranslations" message that could mislead someone who
+    // already holds ImportTranslations into thinking their permissions are unchanged.
+    expect(screen.getByText("EditProd", { selector: "code" })).toBeInTheDocument();
+    expect(screen.queryByText("ImportTranslations", { selector: "code" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Import JSON" })).toBeDisabled();
   });
 
-  it("disables import for a production target when EditProd is held but ImportTranslations is not", () => {
+  it("disables import for a production target when EditProd is held but ImportTranslations is not, and names ImportTranslations specifically", () => {
     mockPermissions = new Set(["EditProd"]);
     renderPanel(nonOwnerProject);
 
     expect(screen.getByText(deniedBannerText)).toBeInTheDocument();
+    expect(screen.getByText("ImportTranslations", { selector: "code" })).toBeInTheDocument();
+    expect(screen.queryByText("EditProd", { selector: "code" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Import JSON" })).toBeDisabled();
+  });
+
+  it("names both missing permissions when neither is held", () => {
+    mockPermissions = new Set([]);
+    renderPanel(nonOwnerProject);
+
+    expect(screen.getByText("ImportTranslations", { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByText("EditProd", { selector: "code" })).toBeInTheDocument();
   });
 
   it("allows import for a production target once both ImportTranslations and EditProd are held", () => {

@@ -12,18 +12,18 @@ import { ProjectResourcesPanel } from "./project/ProjectResourcesPanel";
 import { ProjectSettingsPanel } from "./project/ProjectSettingsPanel";
 import { ProjectTranslationsPanel } from "./project/ProjectTranslationsPanel";
 
-const PROJECT_TABS = [
-  { id: "general", label: "General" },
-  { id: "translations", label: "Translations" },
-  { id: "import", label: "Import / Export" },
-  { id: "access", label: "Access" },
-  { id: "environments", label: "Environments" },
-  { id: "languages", label: "Languages" },
-  { id: "namespaces", label: "Namespaces" },
-  { id: "danger", label: "Danger Zone" },
+const PROJECT_TAB_IDS = [
+  "general",
+  "translations",
+  "import",
+  "access",
+  "environments",
+  "languages",
+  "namespaces",
+  "danger",
 ] as const;
 
-type ProjectTab = (typeof PROJECT_TABS)[number]["id"];
+type ProjectTab = (typeof PROJECT_TAB_IDS)[number];
 
 export function ProjectPage() {
   const { projectSlug = "" } = useParams();
@@ -32,7 +32,8 @@ export function ProjectPage() {
   const permissionSet = usePermissionSet();
   const requestedTab = searchParams.get("tab");
   const activeTab = isProjectTab(requestedTab) ? requestedTab : "general";
-  const activeTabLabel = getActiveTabLabel(activeTab);
+  const projectTabs = PROJECT_TAB_IDS.map((id) => ({ id, label: t(`project.tabs.${id}`) }));
+  const activeTabLabel = getActiveTabLabel(activeTab, t);
 
   const projectQuery = useQuery({
     queryKey: ["project", projectSlug],
@@ -86,8 +87,8 @@ export function ProjectPage() {
 
   return (
     <section className="page workspace-page project-settings-page">
-      <div className="project-breadcrumbs" aria-label="Breadcrumb">
-        <Link to="/projects">Projects</Link>
+      <div className="project-breadcrumbs" aria-label={t("project.breadcrumb.label")}>
+        <Link to="/projects">{t("nav.projects")}</Link>
         <span>/</span>
         <Link to={`/projects/${project.slug}`}>{project.name}</Link>
         <span>/</span>
@@ -96,14 +97,16 @@ export function ProjectPage() {
 
       <header className="project-hero">
         <div className="stack gap-sm">
-          <p className="eyebrow">{project.is_owner ? "Owner workspace" : "Member workspace"}</p>
+          <p className="eyebrow">
+            {project.is_owner ? t("project.badges.owner_workspace") : t("project.badges.member_workspace")}
+          </p>
           <h1 className="page-title">{project.name}</h1>
-          <p className="page-description">{project.description ?? "No project description provided."}</p>
+          <p className="page-description">{project.description ?? t("project.hero.no_description")}</p>
         </div>
       </header>
 
-      <nav aria-label="Project settings sections" className="project-tabs">
-        {PROJECT_TABS.map((tab) => {
+      <nav aria-label={t("project.tabs_nav_label")} className="project-tabs">
+        {projectTabs.map((tab) => {
           const isActive = tab.id === activeTab;
           return (
             <button
@@ -190,13 +193,13 @@ export function ProjectPage() {
 }
 
 function isProjectTab(value: string | null): value is ProjectTab {
-  return PROJECT_TABS.some((tab) => tab.id === value);
+  return (PROJECT_TAB_IDS as readonly string[]).includes(value ?? "");
 }
 
-function getActiveTabLabel(activeTab: ProjectTab): string {
+function getActiveTabLabel(activeTab: ProjectTab, t: (key: string) => string): string {
   if (activeTab === "general") {
-    return "Project Settings";
+    return t("project.settings.title");
   }
 
-  return PROJECT_TABS.find((tab) => tab.id === activeTab)?.label ?? "Project";
+  return t(`project.tabs.${activeTab}`);
 }

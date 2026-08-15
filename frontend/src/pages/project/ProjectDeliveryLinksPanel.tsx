@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 import { DeliveryManifest, Environment, Language, Namespace, apiGet, buildErrorMessage } from "../../api";
+import { MetaRow } from "../../components/MetaRow";
 
 export function ProjectDeliveryLinksPanel({
   projectSlug,
@@ -59,10 +60,13 @@ export function ProjectDeliveryLinksPanel({
             id: namespaceItem.id,
             name: namespaceItem.name,
             href: `${origin}${manifestItem.url}`,
+            version: manifestItem.version,
           }
         : null;
     })
-    .filter((item): item is { id: string; name: string; href: string } => item !== null);
+    .filter(
+      (item): item is { id: string; name: string; href: string; version: string } => item !== null,
+    );
 
   if (environments.length === 0 || languages.length === 0) {
     return null;
@@ -78,6 +82,25 @@ export function ProjectDeliveryLinksPanel({
           </p>
         </div>
       </header>
+
+      <div className="banner info stack gap-sm">
+        <p>
+          <strong>Versioned URL</strong> (has a <code>?v=</code> parameter): pins the response
+          to a specific content version. It is cached as immutable and never changes; a new
+          translation edit produces a new version and a new URL instead of changing this one.
+        </p>
+        <p>
+          <strong>Unversioned URL</strong> (the delivery manifest below): always resolves to the
+          current version, so it is cached briefly and must be revalidated (via <code>ETag</code>
+          /<code>If-None-Match</code>) on every use.
+        </p>
+        <p>
+          These endpoints are public by default. A deployment can require an{" "}
+          <code>Authorization: Bearer &lt;token&gt;</code> header instead; that token is a
+          deployment-wide server setting and is never shown in this UI. See the README's{" "}
+          <code>REST API</code> section for request examples covering both modes.
+        </p>
+      </div>
 
       <div className="form-grid">
         <label className="field">
@@ -111,14 +134,18 @@ export function ProjectDeliveryLinksPanel({
       ) : (
         <div className="project-link-list">
           <DeliveryLinkCard
+            cacheMode="immutable"
             href={localeBundleHref}
             label="Locale bundle endpoint"
             description="Resolved bundle URL returned by the current delivery manifest."
+            version={deliveryManifestQuery.data?.locale_bundle_version ?? null}
           />
           <DeliveryLinkCard
+            cacheMode="short"
             href={deliveryManifestHref}
             label="Delivery manifest endpoint"
             description="Manifest response used by clients to discover namespace payloads."
+            version={null}
           />
           {namespaceLinks.length > 0 ? (
             <div className="stack gap-sm">
@@ -126,10 +153,12 @@ export function ProjectDeliveryLinksPanel({
               <div className="project-link-list">
                 {namespaceLinks.map((item) => (
                   <DeliveryLinkCard
+                    cacheMode="immutable"
                     key={item.id}
                     href={item.href}
                     label={`${item.name}.json`}
                     description="Resolved namespace payload URL from the manifest."
+                    version={item.version}
                   />
                 ))}
               </div>
@@ -147,10 +176,14 @@ function DeliveryLinkCard({
   label,
   description,
   href,
+  version,
+  cacheMode,
 }: {
   label: string;
   description: string;
   href: string | null;
+  version: string | null;
+  cacheMode: "immutable" | "short";
 }) {
   if (!href) {
     return null;
@@ -161,6 +194,15 @@ function DeliveryLinkCard({
       <div className="stack gap-sm">
         <strong>{label}</strong>
         <p className="muted">{description}</p>
+        {version ? <MetaRow label="Content version" value={version} /> : null}
+        <MetaRow
+          label="Cache behavior"
+          value={
+            cacheMode === "immutable"
+              ? "Immutable (versioned URL, cached indefinitely)"
+              : "Short-lived (revalidated via ETag on every use)"
+          }
+        />
         <a className="project-link" href={href} rel="noreferrer" target="_blank">
           <span>{href}</span>
           <ExternalLink size={14} />

@@ -21,7 +21,7 @@ const NO_PROJECT_ACCESS_FILTER = "__no-project-access__";
 type StatusFilter = "all" | "active" | "inactive";
 
 export function UsersPage() {
-  const { t } = useTranslation();
+  const { t, tCount } = useTranslation();
   const permissionSet = usePermissionSet();
   const canManageUsers = permissionSet.has("ManageUsers");
   const canManagePermissions = permissionSet.has("ManagePermissions");
@@ -114,7 +114,7 @@ export function UsersPage() {
   }
 
   if (usersSummaryQuery.isLoading) {
-    return <LoadingScreen label="Loading users workspace..." compact />;
+    return <LoadingScreen label={t("users.loading")} compact />;
   }
 
   if (usersSummaryQuery.isError) {
@@ -129,15 +129,15 @@ export function UsersPage() {
       <header className="page-header">
         <div>
           <p className="eyebrow">{t("users.eyebrow")}</p>
-          <h1 className="page-title">Users and permissions</h1>
+          <h1 className="page-title">{t("users.title")}</h1>
         </div>
       </header>
 
       <div className="toolbar users-toolbar">
         <label className="field search-field">
-          <span>Search users</span>
+          <span>{t("users.filters.search_label")}</span>
           <input
-            placeholder="Search by email or display name"
+            placeholder={t("users.filters.search_placeholder")}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
@@ -145,10 +145,10 @@ export function UsersPage() {
 
         {canManageUsers ? (
           <label className="field compact-field">
-            <span>Project</span>
+            <span>{t("users.filters.project_label")}</span>
             <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
-              <option value="all">All projects</option>
-              <option value={NO_PROJECT_ACCESS_FILTER}>No project access</option>
+              <option value="all">{t("users.filters.project_all")}</option>
+              <option value={NO_PROJECT_ACCESS_FILTER}>{t("users.filters.project_none")}</option>
               {projectCatalog.map((project) => (
                 <option key={project.id} value={project.slug}>
                   {project.name}
@@ -159,19 +159,19 @@ export function UsersPage() {
         ) : null}
 
         <label className="field compact-field">
-          <span>Status</span>
+          <span>{t("users.filters.status_label")}</span>
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
-            <option value="all">All</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
+            <option value="all">{t("users.filters.status_all")}</option>
+            <option value="active">{t("users.badges.active")}</option>
+            <option value="inactive">{t("users.badges.inactive")}</option>
           </select>
         </label>
 
         {canManagePermissions ? (
           <label className="field compact-field">
-            <span>Permission</span>
+            <span>{t("users.filters.permission_label")}</span>
             <select value={permissionFilter} onChange={(event) => setPermissionFilter(event.target.value)}>
-              <option value="all">Any permission</option>
+              <option value="all">{t("users.filters.permission_any")}</option>
               {permissionsCatalog.map((permission) => (
                 <option key={permission.id} value={permission.code}>
                   {permission.code}
@@ -184,20 +184,24 @@ export function UsersPage() {
         <div className="users-toolbar-actions">
           {filtersActive ? (
             <button className="button ghost" onClick={clearFilters} type="button">
-              Clear filters
+              {t("users.filters.clear")}
             </button>
           ) : null}
           {canManageUsers ? (
             <button className="button primary" onClick={() => setIsCreateDialogOpen(true)} type="button">
-              New user
+              {t("users.new_button")}
             </button>
           ) : null}
         </div>
       </div>
 
       <div className="users-filter-summary" aria-live="polite">
-        <span>{usersSummaryQuery.isFetching ? "Updating results..." : `${users.length} matching users`}</span>
-        {filtersActive ? <span>Filters are combined using AND.</span> : <span>Showing all users.</span>}
+        <span>
+          {usersSummaryQuery.isFetching
+            ? t("users.filters.updating")
+            : `${users.length} ${tCount("users.filters.matching", users.length)}`}
+        </span>
+        {filtersActive ? <span>{t("users.filters.and_hint")}</span> : <span>{t("users.filters.showing_all")}</span>}
       </div>
 
       {pageSuccess ? <div className="banner success">{pageSuccess}</div> : null}
@@ -210,8 +214,8 @@ export function UsersPage() {
         <article className="panel stack gap-md">
           <header className="panel-header">
             <div className="stack gap-sm">
-              <h2>Users</h2>
-              <p className="panel-copy">Compact directory with search, filters, direct permission summary, and project access count.</p>
+              <h2>{t("users.list.title")}</h2>
+              <p className="panel-copy">{t("users.panel.description")}</p>
             </div>
             <span className="badge">{users.length}</span>
           </header>
@@ -237,7 +241,7 @@ export function UsersPage() {
           selectedUser={selectedUser}
           userPermissions={userPermissionsQuery.data ?? []}
           onDeleted={() => {
-            setPageSuccess("User deleted.");
+            setPageSuccess(t("users.delete.success"));
             setSelectedUserId("");
           }}
         />
@@ -248,7 +252,7 @@ export function UsersPage() {
         open={isCreateDialogOpen}
         onClose={() => setIsCreateDialogOpen(false)}
         onCreated={(user) => {
-          setPageSuccess("User created.");
+          setPageSuccess(t("users.create.success"));
           setSelectedUserId(user.id);
         }}
       />

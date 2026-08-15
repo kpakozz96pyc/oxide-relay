@@ -167,6 +167,179 @@ describe("ProjectTranslationsPanel permission gating (OXR-55)", () => {
   });
 });
 
+describe("ProjectTranslationsPanel write-control permission gating (OXR-56)", () => {
+  function renderPanelWithPermissions(permissions: string[]) {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+
+      if (path === "/api/v1/me/permissions") {
+        return Promise.resolve(jsonResponse({ permissions }));
+      }
+      if (path === "/api/v1/projects/demo-project/translations/grid") {
+        return Promise.resolve(jsonResponse(gridResponse));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <I18nProvider>
+          <ProjectTranslationsPanel
+            environments={environments}
+            languages={languages}
+            namespaces={namespaces}
+            project={project}
+            projectSlug={project.slug}
+          />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+
+    return { fetchMock };
+  }
+
+  it("disables the value and description cells for a read-only member (ReadTranslations only)", async () => {
+    renderPanelWithPermissions(["ReadTranslations"]);
+
+    const valueInput = await screen.findByDisplayValue("Save");
+    expect(valueInput).toBeDisabled();
+    const descriptionInput = screen.getByPlaceholderText("Optional description");
+    expect(descriptionInput).toBeDisabled();
+
+    // Without EditTranslations/DeleteTranslations there is nothing to create or delete.
+    expect(screen.queryByRole("button", { name: "+" })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("translation.key")).not.toBeInTheDocument();
+  });
+
+  it("keeps the value cell disabled when EditTranslations is granted without the environment permission", async () => {
+    // This is the exact gap the bug report described: a member has EditTranslations but
+    // not EditProd for the "production" environment used in these fixtures, so the
+    // backend would still reject the write. The cell must stay disabled, not just fail
+    // silently after the request.
+    renderPanelWithPermissions(["ReadTranslations", "EditTranslations"]);
+
+    const valueInput = await screen.findByDisplayValue("Save");
+    expect(valueInput).toBeDisabled();
+  });
+
+  it("enables the value and description cells once the caller holds full write permissions", async () => {
+    renderPanelWithPermissions([
+      "ReadTranslations",
+      "EditTranslations",
+      "EditProd",
+      "DeleteTranslations",
+    ]);
+
+    const valueInput = await screen.findByDisplayValue("Save");
+    expect(valueInput).not.toBeDisabled();
+    const existingRow = valueInput.closest("tr");
+    if (!existingRow) {
+      throw new Error("expected the translation row to contain the value input");
+    }
+    const descriptionInput = within(existingRow).getByPlaceholderText("Optional description");
+    expect(descriptionInput).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "+" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Delete/ })).not.toBeDisabled();
+  });
+});
+
+describe("ProjectTranslationsPanel placeholder gap accessibility (OXR-69)", () => {
+  const ownerProject: Project = { ...project, owner_user_id: "owner-1", is_owner: true };
+  const twoLanguages: Language[] = [
+    languages[0],
+    { id: "language-2", project_id: project.id, code: "ru", name: "Russian", created_at: "2026-08-06T00:00:00Z", updated_at: "2026-08-06T00:00:00Z" },
+  ];
+  const gapGridResponse: TranslationGridResponse = {
+    items: [
+      {
+        representative_translation_id: "value-1",
+        translation_key_id: "key-1",
+        key: "greeting.hello",
+        description: null,
+        namespace: "common",
+        values: {
+          en: { id: "value-en", value: "Hello {name}" },
+          ru: { id: "value-ru", value: "Privet" },
+        },
+      },
+    ],
+    total: 1,
+    page: 1,
+    page_size: 25,
+  };
+
+  function renderGapPanel() {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/me/permissions") {
+        return Promise.resolve(jsonResponse({ permissions: [] }));
+      }
+      if (path === "/api/v1/projects/demo-project/translations/grid") {
+        return Promise.resolve(jsonResponse(gapGridResponse));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <I18nProvider>
+          <ProjectTranslationsPanel
+            environments={environments}
+            languages={twoLanguages}
+            namespaces={namespaces}
+            project={ownerProject}
+            projectSlug={ownerProject.slug}
+          />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  async function makeRussianColumnVisible(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("button", { name: "en" }));
+    await user.click(screen.getByLabelText("ru · Russian"));
+  }
+
+  it("exposes the missing placeholder names as text linked to the cell, not only as a colored dot", async () => {
+    const user = userEvent.setup();
+    renderGapPanel();
+    await makeRussianColumnVisible(user);
+
+    const ruValueInput = await screen.findByDisplayValue("Privet");
+    const describedById = ruValueInput.getAttribute("aria-describedby");
+    expect(describedById).toBeTruthy();
+
+    const description = document.getElementById(describedById as string);
+    expect(description).not.toBeNull();
+    expect(description).toHaveTextContent("{name}");
+
+    // The "en" cell has every placeholder it needs, so it must carry no such warning.
+    const enValueInput = screen.getByDisplayValue("Hello {name}");
+    expect(enValueInput.getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("clears the warning once the placeholders become consistent", async () => {
+    const user = userEvent.setup();
+    renderGapPanel();
+    await makeRussianColumnVisible(user);
+
+    const ruValueInput = await screen.findByDisplayValue("Privet");
+    expect(ruValueInput.getAttribute("aria-describedby")).toBeTruthy();
+
+    // userEvent.type interprets `{` as the start of a special key sequence, so set the
+    // value directly instead of typing the literal placeholder braces.
+    fireEvent.change(ruValueInput, { target: { value: "Privet {name}" } });
+
+    await waitFor(() => {
+      expect(ruValueInput.getAttribute("aria-describedby")).toBeNull();
+    });
+  });
+});
+
 describe("ProjectTranslationsPanel new-key draft stability (OXR-62)", () => {
   const ownerProject: Project = { ...project, owner_user_id: "owner-1", is_owner: true };
   const twoNamespaces: Namespace[] = [

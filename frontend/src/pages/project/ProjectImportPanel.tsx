@@ -76,9 +76,10 @@ export function ProjectImportPanel({
   }, [namespace, namespaces]);
 
   const importPreview = parseImportPreview(importJson, namespace);
-  const canImportTranslations =
-    project.is_owner ||
-    (permissionSet.has("ImportTranslations") && permissionSet.has(editEnvironmentPermission(environment)));
+  const environmentPermissionCode = editEnvironmentPermission(environment);
+  const hasImportTranslations = project.is_owner || permissionSet.has("ImportTranslations");
+  const hasEnvironmentEditPermission = project.is_owner || permissionSet.has(environmentPermissionCode);
+  const canImportTranslations = hasImportTranslations && hasEnvironmentEditPermission;
   const canExportTranslations = project.is_owner || permissionSet.has("ExportTranslations");
   const hasTarget = Boolean(environment && language && namespace);
   const exportFilename = createExportFilename(projectSlug, environment, language, namespace);
@@ -162,6 +163,21 @@ export function ProjectImportPanel({
           </p>
         </div>
       </header>
+
+      {hasTarget ? (
+        <div className="import-target-summary" role="status">
+          <span className="field-hint">Target for this import:</span>
+          <span className="import-target-breadcrumb">
+            <strong>{project.name}</strong>
+            <span aria-hidden="true">/</span>
+            <span>{environments.find((item) => item.slug === environment)?.name ?? environment}</span>
+            <span aria-hidden="true">/</span>
+            <span>{language}</span>
+            <span aria-hidden="true">/</span>
+            <span>{namespace}</span>
+          </span>
+        </div>
+      ) : null}
 
       <div className="import-export-target-grid">
         <label className="field">
@@ -309,7 +325,21 @@ export function ProjectImportPanel({
 
           {!canImportTranslations ? (
             <div className="banner info">
-              Import requires owner access or the <code>ImportTranslations</code> permission for the selected environment.
+              <strong>Import is unavailable for the current target.</strong>
+              <ul className="missing-permissions-list">
+                {!hasImportTranslations ? (
+                  <li>
+                    Missing the <code>ImportTranslations</code> permission.
+                  </li>
+                ) : null}
+                {!hasEnvironmentEditPermission ? (
+                  <li>
+                    Missing the <code>{environmentPermissionCode}</code> permission for the{" "}
+                    <strong>{environments.find((item) => item.slug === environment)?.name ?? environment}</strong>{" "}
+                    environment.
+                  </li>
+                ) : null}
+              </ul>
             </div>
           ) : null}
         </section>

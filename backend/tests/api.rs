@@ -200,6 +200,10 @@ async fn openapi_document_matches_the_registered_api_surface() {
         ),
         ("/api/v1/projects/{project_slug}/members", &["get", "post"]),
         (
+            "/api/v1/projects/{project_slug}/members/search",
+            &["get"],
+        ),
+        (
             "/api/v1/projects/{project_slug}/members/{user_id}",
             &["delete"],
         ),
@@ -1771,6 +1775,127 @@ async fn admin_user_permissions_and_project_members_endpoints_work() {
         .await;
 
     assert_eq!(delete_user_project_access.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn project_member_search_excludes_owner_and_existing_members_and_requires_a_query() {
+    let harness = TestHarness::new().await;
+
+    let owner_id = harness
+        .insert_user("search-owner@example.com", "owner-password", "Search Owner", true)
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Search Project", "search-project")
+        .await;
+    harness.add_project_access(&owner_id, &project_id).await;
+
+    let existing_member_id = harness
+        .insert_user(
+            "existing-member@example.com",
+            "member-password",
+            "Existing Member",
+            true,
+        )
+        .await;
+    harness.add_project_access(&existing_member_id, &project_id).await;
+
+    let candidate_id = harness
+        .insert_user("ada.lovelace@example.com", "candidate-password", "Ada Lovelace", true)
+        .await;
+    let inactive_candidate_id = harness
+        .insert_user(
+            "inactive.candidate@example.com",
+            "candidate-password",
+            "Ada Retired",
+            false,
+        )
+        .await;
+    let unrelated_id = harness
+        .insert_user("grace.hopper@example.com", "candidate-password", "Grace Hopper", true)
+        .await;
+
+    let owner_cookie = harness.login("search-owner@example.com", "owner-password").await;
+
+    // An empty query returns nothing rather than dumping every eligible user, so the
+    // picker only ever shows results once someone has typed something to search for.
+    let empty_query = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/search-project/members/search?q=")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(empty_query.status(), StatusCode::OK);
+    assert_eq!(json_body(empty_query).await.as_array().expect("array").len(), 0);
+
+    let search_by_name = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/search-project/members/search?q=ada")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(search_by_name.status(), StatusCode::OK);
+    let results = json_body(search_by_name).await;
+    let results = results.as_array().expect("array");
+    // Matches the active "Ada Lovelace" by display name, but not the inactive account
+    // that also matches "ada", and not the unrelated "Grace Hopper" account.
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["id"], candidate_id);
+    assert_eq!(results[0]["display_name"], "Ada Lovelace");
+    assert!(
+        results
+            .iter()
+            .all(|item| item["id"] != inactive_candidate_id && item["id"] != unrelated_id)
+    );
+
+    let search_by_email_excludes_owner_and_members = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/search-project/members/search?q=example.com")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(search_by_email_excludes_owner_and_members.status(), StatusCode::OK);
+    let broad_results = json_body(search_by_email_excludes_owner_and_members).await;
+    let broad_results = broad_results.as_array().expect("array");
+    let broad_ids: Vec<&str> = broad_results
+        .iter()
+        .map(|item| item["id"].as_str().expect("id"))
+        .collect();
+    assert!(broad_ids.contains(&candidate_id.as_str()));
+    assert!(broad_ids.contains(&unrelated_id.as_str()));
+    assert!(!broad_ids.contains(&owner_id.as_str()));
+    assert!(!broad_ids.contains(&existing_member_id.as_str()));
+    assert!(!broad_ids.contains(&inactive_candidate_id.as_str()));
+
+    // A member without ManageProjectMembers (and without owner override) cannot use the
+    // picker's search endpoint either, the same as the existing members endpoints.
+    let plain_member_id = harness
+        .insert_user("plain-member@example.com", "member-password", "Plain Member", true)
+        .await;
+    harness.add_project_access(&plain_member_id, &project_id).await;
+    let plain_member_cookie = harness.login("plain-member@example.com", "member-password").await;
+    let forbidden_search = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/search-project/members/search?q=ada")
+                .header(header::COOKIE, plain_member_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(forbidden_search.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

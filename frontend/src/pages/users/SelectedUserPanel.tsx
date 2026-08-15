@@ -363,8 +363,6 @@ export function SelectedUserPanel({
           {!canManagePermissions ? (
             <div className="banner info">Permission editing requires the ManagePermissions permission.</div>
           ) : null}
-          {replacePermissionsMutation.isError ? <div className="banner error">{buildErrorMessage(replacePermissionsMutation.error)}</div> : null}
-          {permissionsSuccess ? <div className="banner success">{permissionsSuccess}</div> : null}
           {permissionsLoading ? <p className="muted">Loading permissions...</p> : null}
           <div className="users-inline-summary">
             <span className="muted">{`Selected: ${permissionsDraft.length} permissions`}</span>
@@ -439,7 +437,7 @@ export function SelectedUserPanel({
             </section>
           ) : null}
 
-          <div className="action-row">
+          <div className="action-row permission-save-row">
             <button
               className="button primary"
               disabled={!canManagePermissions || !permissionsDirty || replacePermissionsMutation.isPending}
@@ -459,6 +457,17 @@ export function SelectedUserPanel({
             >
               Reset changes
             </button>
+            <span aria-live="polite" className="save-feedback-slot">
+              {replacePermissionsMutation.isError ? (
+                <span className="banner error inline-feedback" role="alert">
+                  {buildErrorMessage(replacePermissionsMutation.error)}
+                </span>
+              ) : permissionsSuccess ? (
+                <span className="banner success inline-feedback" role="status">
+                  {permissionsSuccess}
+                </span>
+              ) : null}
+            </span>
           </div>
         </div>
       ) : null}

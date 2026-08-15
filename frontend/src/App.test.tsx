@@ -1078,9 +1078,16 @@ describe("App routing", () => {
     expect(screen.getByRole("heading", { name: "Environments" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Security" }));
+    // OXR-63 regression: opening a user's Security tab must not narrow the shared
+    // users-summary list down to just the selected user. "Member" only appears as a
+    // table row (the selected user's own name is also shown in the panel header), so
+    // this is unambiguous.
+    expect(screen.getByText("Member")).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: "Generate reset link" }));
 
     expect(await screen.findByText("One-time reset link")).toBeInTheDocument();
+    expect(screen.getByText("Member")).toBeInTheDocument();
     expect(screen.getByText("/reset-password?token=one-time-token")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Copy link" }));
     expect(clipboardWriteText).toHaveBeenCalledWith("/reset-password?token=one-time-token");

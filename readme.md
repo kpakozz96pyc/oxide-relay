@@ -636,6 +636,47 @@ Unversioned static URLs still work and use short TTL plus revalidation headers.
 
 ---
 
+# Delivery Request Examples
+
+Practical `curl` examples for each supported delivery mode. All delivery
+endpoints support every mode below the same way; only the locale bundle
+endpoint is shown for brevity.
+
+**Public, unversioned** (default configuration, no token). Short-lived cache;
+revalidate with the returned `ETag`:
+
+```bash
+curl -i "https://relay.example.com/api/v1/projects/hr-portal/locales/ru?environment=production"
+
+# Revalidate on a later request using the ETag from the first response:
+curl -i "https://relay.example.com/api/v1/projects/hr-portal/locales/ru?environment=production" \
+  -H 'If-None-Match: "<etag-from-previous-response>"'
+# -> 304 Not Modified if nothing changed
+```
+
+**Public, versioned** (pin to a known content version for immutable caching).
+Get `<version>` from the delivery manifest or from a previous response's
+`version` field:
+
+```bash
+curl -i "https://relay.example.com/api/v1/projects/hr-portal/locales/ru?environment=production&v=<version>"
+# -> 200 with "Cache-Control: public, max-age=31536000, immutable" if <version> is current
+# -> 404 Not Found if <version> is stale or invalid
+```
+
+**Bearer-token protected** (when `OXIDERELAY_DELIVERY_TOKEN` is configured on
+the deployment). The same header is required on every delivery endpoint,
+including the manifest and static JSON files:
+
+```bash
+curl -i "https://relay.example.com/api/v1/projects/hr-portal/locales/ru?environment=production" \
+  -H "Authorization: Bearer <OXIDERELAY_DELIVERY_TOKEN>"
+# -> 401 Unauthorized without the header when a token is configured
+# -> "Cache-Control: private, ..." and "Vary: Authorization" on protected responses
+```
+
+---
+
 # Security Model
 
 OxideRelay has two exposure classes in MVP:

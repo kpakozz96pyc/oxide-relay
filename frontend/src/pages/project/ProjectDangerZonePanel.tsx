@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { Check, Copy } from "lucide-react";
 import { Project, apiDelete, buildErrorMessage } from "../../api";
 
 export function ProjectDangerZonePanel({
@@ -13,6 +14,19 @@ export function ProjectDangerZonePanel({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [confirmationSlug, setConfirmationSlug] = useState("");
+  const [slugCopyState, setSlugCopyState] = useState<"idle" | "copied" | "error">("idle");
+
+  async function copySlug() {
+    try {
+      if (!navigator.clipboard) {
+        throw new Error("Clipboard API is unavailable.");
+      }
+      await navigator.clipboard.writeText(project.slug);
+      setSlugCopyState("copied");
+    } catch {
+      setSlugCopyState("error");
+    }
+  }
 
   const deleteProjectMutation = useMutation({
     mutationFn: async () => apiDelete(`/api/v1/projects/${project.slug}`),
@@ -40,9 +54,28 @@ export function ProjectDangerZonePanel({
       <div className="danger-box">
         <div className="stack gap-sm">
           <strong>Delete project</strong>
-          <p className="muted">
-            Type <code>{project.slug}</code> to confirm permanent deletion.
-          </p>
+          <p className="muted">Type the required slug below to confirm permanent deletion.</p>
+          <div className="field">
+            <span id="danger-zone-required-slug-label">Required slug</span>
+            <div className="reset-link-value-row">
+              <code aria-labelledby="danger-zone-required-slug-label" className="inline-code-block">
+                {project.slug}
+              </code>
+              <button
+                className="button ghost"
+                onClick={() => {
+                  void copySlug();
+                }}
+                type="button"
+              >
+                {slugCopyState === "copied" ? <Check size={16} /> : <Copy size={16} />}
+                {slugCopyState === "copied" ? "Copied" : "Copy slug"}
+              </button>
+            </div>
+            {slugCopyState === "error" ? (
+              <span className="danger-text">Could not copy the slug. Select it manually.</span>
+            ) : null}
+          </div>
         </div>
 
         <label className="field">

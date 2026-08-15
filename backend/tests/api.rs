@@ -2189,18 +2189,27 @@ async fn concurrent_admin_removal_requests_cannot_both_bypass_the_last_admin_gua
     let statuses = [deactivate_response.status(), delete_response.status()];
     let success_count = statuses.iter().filter(|status| status.is_success()).count();
 
-    // Exactly one side may win. The loser is blocked either by the transactional
-    // last-admin guard (400, if its request reaches the handler after the winner commits)
-    // or by authentication itself (401, if the winner's write deactivates/deletes the
-    // loser's own actor account before the loser's session is re-validated) — both outcomes
-    // prove the invariant held, so either is an acceptable "safe" result here. What matters
-    // is asserted below directly against the database: at least one active administrator
-    // must always remain.
+    // Exactly one side may win. The loser is blocked by one of three safe outcomes,
+    // depending on exactly how the two requests interleave:
+    // - 400, if its request reaches the transactional last-admin guard after the winner
+    //   commits;
+    // - 401, if the winner's write deactivates/deletes the loser's own actor account
+    //   before the loser's session is re-validated;
+    // - 403, if the winner's DELETE cascades away the loser's own user_permissions rows
+    //   (via the users -> user_permissions FK) between the loser's session check and its
+    //   separate, non-transactional `require_permission` check, so the loser is correctly
+    //   turned away for suddenly holding no permissions rather than for the last-admin
+    //   invariant specifically.
+    // All three leave the invariant intact, so any is an acceptable "safe" result here.
+    // What matters is asserted below directly against the database: at least one active
+    // administrator must always remain.
     assert_eq!(success_count, 1, "exactly one racing operation must succeed");
     assert!(
-        statuses
-            .iter()
-            .any(|status| *status == StatusCode::BAD_REQUEST || *status == StatusCode::UNAUTHORIZED),
+        statuses.iter().any(|status| {
+            *status == StatusCode::BAD_REQUEST
+                || *status == StatusCode::UNAUTHORIZED
+                || *status == StatusCode::FORBIDDEN
+        }),
         "the other racing operation must be blocked, got {statuses:?}"
     );
 
@@ -2701,6 +2710,168 @@ async fn translation_grid_supports_search_pagination_and_multiple_languages() {
     assert_eq!(body["items"][0]["values"]["en"]["value"], "Publish");
     assert_eq!(body["items"][0]["values"]["ru"]["value"], "Опубликовать");
     assert!(body["items"][0]["values"].get("sr").is_none());
+}
+
+#[tokio::test]
+async fn missing_mode_handles_base_and_target_languages_independently() {
+    let harness = TestHarness::new().await;
+    let owner_id = harness
+        .insert_user("missing-owner@example.com", "owner-password", "Missing Owner", true)
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Missing Project", "missing-project")
+        .await;
+    harness.add_project_access(&owner_id, &project_id).await;
+    let namespace_id = harness.insert_namespace(&project_id, "common").await;
+    let en_language_id = harness.insert_language(&project_id, "en", "English").await;
+    let ru_language_id = harness.insert_language(&project_id, "ru", "Russian").await;
+    let environment_id = harness
+        .insert_environment(&project_id, "Production", "production")
+        .await;
+
+    // key.a: base (en) present, target (ru) also present -> excluded, target is not missing.
+    let key_a = harness.insert_translation_key(&project_id, &namespace_id, "key.a").await;
+    harness.insert_translation_value(&key_a, &en_language_id, &environment_id, "A en").await;
+    harness.insert_translation_value(&key_a, &ru_language_id, &environment_id, "A ru").await;
+
+    // key.b: base (en) present, target (ru) absent -> the exact case the grid must surface.
+    let key_b = harness.insert_translation_key(&project_id, &namespace_id, "key.b").await;
+    harness
+        .insert_translation_value(&key_b, &en_language_id, &environment_id, "B en")
+        .await;
+
+    // key.c: base (en) absent, target (ru) present -> excluded, base handling is independent
+    // of whether the target happens to have a value.
+    let key_c = harness.insert_translation_key(&project_id, &namespace_id, "key.c").await;
+    harness.insert_translation_value(&key_c, &ru_language_id, &environment_id, "C ru").await;
+
+    // key.d: neither base nor target present -> excluded (base is required).
+    harness.insert_translation_key(&project_id, &namespace_id, "key.d").await;
+
+    let owner_cookie = harness
+        .login("missing-owner@example.com", "owner-password")
+        .await;
+    let response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/missing-project/translations/grid?environment=production&namespace=common&languages=en,ru&base_language=en&missing_languages=ru&page=1&page_size=25")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["total"], 1);
+    let items = body["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["key"], "key.b");
+    assert_eq!(items[0]["values"]["en"]["value"], "B en");
+    assert!(
+        items[0]["values"].get("ru").is_none(),
+        "the missing target language must not appear in values at all"
+    );
+}
+
+#[tokio::test]
+async fn missing_mode_respects_environment_namespace_and_search_filters() {
+    let harness = TestHarness::new().await;
+    let owner_id = harness
+        .insert_user("missing-filters-owner@example.com", "owner-password", "Owner", true)
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Missing Filters Project", "missing-filters-project")
+        .await;
+    harness.add_project_access(&owner_id, &project_id).await;
+    let common_namespace_id = harness.insert_namespace(&project_id, "common").await;
+    let other_namespace_id = harness.insert_namespace(&project_id, "other").await;
+    let en_language_id = harness.insert_language(&project_id, "en", "English").await;
+    // "ru" only needs to exist as a project language for missing_languages=ru to be a valid
+    // target; no key in this test ever gets a ru value.
+    harness.insert_language(&project_id, "ru", "Russian").await;
+    let production_id = harness
+        .insert_environment(&project_id, "Production", "production")
+        .await;
+    let staging_id = harness.insert_environment(&project_id, "Staging", "staging").await;
+
+    // Matches base/target pattern in the right namespace and environment: must be included.
+    let target_key = harness
+        .insert_translation_key(&project_id, &common_namespace_id, "button.publish")
+        .await;
+    harness
+        .insert_translation_value(&target_key, &en_language_id, &production_id, "Publish")
+        .await;
+
+    // Same base/target pattern, but in a different environment: must not leak into the
+    // production result, and must not itself be satisfied by the production row above.
+    let staging_key = harness
+        .insert_translation_key(&project_id, &common_namespace_id, "button.archive")
+        .await;
+    harness
+        .insert_translation_value(&staging_key, &en_language_id, &staging_id, "Archive")
+        .await;
+
+    // Same pattern again, but in a different namespace: must not leak into a
+    // namespace-filtered result either.
+    let other_namespace_key = harness
+        .insert_translation_key(&project_id, &other_namespace_id, "button.export")
+        .await;
+    harness
+        .insert_translation_value(&other_namespace_key, &en_language_id, &production_id, "Export")
+        .await;
+
+    let owner_cookie = harness
+        .login("missing-filters-owner@example.com", "owner-password")
+        .await;
+
+    let response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/missing-filters-project/translations/grid?environment=production&namespace=common&languages=en,ru&base_language=en&missing_languages=ru&page=1&page_size=25")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["total"], 1, "staging and other-namespace matches must not leak in");
+    assert_eq!(body["items"][0]["key"], "button.publish");
+
+    // A search term that only matches the staging-environment key must correctly exclude
+    // it here too (still scoped to namespace=common, environment=production).
+    let search_response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/missing-filters-project/translations/grid?environment=production&namespace=common&languages=en,ru&base_language=en&missing_languages=ru&search=archive&page=1&page_size=25")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(search_response.status(), StatusCode::OK);
+    let search_body = json_body(search_response).await;
+    assert_eq!(search_body["total"], 0);
+
+    // A search term matching the still-eligible key must keep it.
+    let matching_search_response = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/missing-filters-project/translations/grid?environment=production&namespace=common&languages=en,ru&base_language=en&missing_languages=ru&search=publish&page=1&page_size=25")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(matching_search_response.status(), StatusCode::OK);
+    let matching_search_body = json_body(matching_search_response).await;
+    assert_eq!(matching_search_body["total"], 1);
+    assert_eq!(matching_search_body["items"][0]["key"], "button.publish");
 }
 
 #[tokio::test]

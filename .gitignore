@@ -10,5 +10,6 @@
 /data
 /tmp
 test-terms-60000.json
+.local
 
 *.sqlite

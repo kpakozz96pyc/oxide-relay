@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
-import { ProjectMember, apiDelete, apiGet, apiPost, buildErrorMessage } from "../../api";
+import { MemberCandidate, ProjectMember, apiDelete, apiGet, apiPost, buildErrorMessage } from "../../api";
 
 export function ProjectMembersPanel({
   projectSlug,
@@ -16,7 +16,9 @@ export function ProjectMembersPanel({
 }) {
   const queryClient = useQueryClient();
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [memberUserId, setMemberUserId] = useState("");
+  const [memberSearch, setMemberSearch] = useState("");
+  const [selectedCandidate, setSelectedCandidate] = useState<MemberCandidate | null>(null);
+  const deferredMemberSearch = useDeferredValue(memberSearch.trim());
 
   const membersQuery = useQuery({
     queryKey: ["project", projectSlug, "members"],
@@ -24,15 +26,29 @@ export function ProjectMembersPanel({
     enabled: Boolean(projectSlug) && canViewMembers,
   });
 
+  const memberCandidatesQuery = useQuery({
+    queryKey: ["project", projectSlug, "member-candidates", deferredMemberSearch],
+    queryFn: () =>
+      apiGet<MemberCandidate[]>(
+        `/api/v1/projects/${projectSlug}/members/search?q=${encodeURIComponent(deferredMemberSearch)}`,
+      ),
+    enabled: isCreateDialogOpen && canManageMembers && deferredMemberSearch.length > 0 && !selectedCandidate,
+  });
+
   const addMemberMutation = useMutation({
-    mutationFn: async () =>
-      apiPost(`/api/v1/projects/${projectSlug}/members`, {
-        user_id: memberUserId,
-      }),
+    mutationFn: async () => {
+      if (!selectedCandidate) {
+        throw new Error("Select a user before adding them.");
+      }
+      return apiPost(`/api/v1/projects/${projectSlug}/members`, {
+        user_id: selectedCandidate.id,
+      });
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["project", projectSlug, "members"] });
       setIsCreateDialogOpen(false);
-      setMemberUserId("");
+      setMemberSearch("");
+      setSelectedCandidate(null);
     },
   });
 
@@ -92,7 +108,7 @@ export function ProjectMembersPanel({
           <div className="stack gap-sm">
             <h2>Project Members</h2>
             <p className="panel-copy">
-              Manage membership by user ID. The owner is always retained separately from regular members.
+              Search for a user by name or email to add them. The owner is always retained separately from regular members.
             </p>
           </div>
           <div className="action-row">
@@ -117,7 +133,7 @@ export function ProjectMembersPanel({
         ) : null}
 
         {canManageMembers ? (
-          <p className="muted">Add members through a dedicated modal to keep the access workspace compact.</p>
+          <p className="muted">Search by name or email through a dedicated modal to keep the access workspace compact.</p>
         ) : (
           <div className="banner info">You can view members, but only the owner or a user with member-management permission can change them.</div>
         )}
@@ -153,17 +169,27 @@ export function ProjectMembersPanel({
       </article>
 
       <AddProjectMemberDialog
+        candidates={memberCandidatesQuery.data ?? []}
+        candidatesError={memberCandidatesQuery.isError}
+        candidatesLoading={memberCandidatesQuery.isFetching}
         canManageMembers={canManageMembers}
         error={addMemberMutation.error}
         isPending={addMemberMutation.isPending}
-        onChangeUserId={setMemberUserId}
+        onChangeSearch={(value) => {
+          setMemberSearch(value);
+          setSelectedCandidate(null);
+        }}
         onClose={() => {
           setIsCreateDialogOpen(false);
+          setMemberSearch("");
+          setSelectedCandidate(null);
           addMemberMutation.reset();
         }}
+        onSelectCandidate={setSelectedCandidate}
         onSubmit={() => addMemberMutation.mutate()}
         open={isCreateDialogOpen}
-        userId={memberUserId}
+        search={memberSearch}
+        selectedCandidate={selectedCandidate}
       />
     </div>
   );
@@ -171,32 +197,47 @@ export function ProjectMembersPanel({
 
 function AddProjectMemberDialog({
   open,
-  userId,
+  search,
+  candidates,
+  candidatesLoading,
+  candidatesError,
+  selectedCandidate,
   isPending,
   error,
   canManageMembers,
-  onChangeUserId,
+  onChangeSearch,
+  onSelectCandidate,
   onClose,
   onSubmit,
 }: {
   open: boolean;
-  userId: string;
+  search: string;
+  candidates: MemberCandidate[];
+  candidatesLoading: boolean;
+  candidatesError: boolean;
+  selectedCandidate: MemberCandidate | null;
   isPending: boolean;
   error: unknown;
   canManageMembers: boolean;
-  onChangeUserId: (value: string) => void;
+  onChangeSearch: (value: string) => void;
+  onSelectCandidate: (candidate: MemberCandidate | null) => void;
   onClose: () => void;
   onSubmit: () => void;
 }) {
   useEffect(() => {
     if (!open) {
-      onChangeUserId("");
+      onChangeSearch("");
+      onSelectCandidate(null);
     }
-  }, [open, onChangeUserId]);
+  }, [open, onChangeSearch, onSelectCandidate]);
 
   if (!open) {
     return null;
   }
+
+  const trimmedSearch = search.trim();
+  const showEmptyResultsHint =
+    !candidatesLoading && !candidatesError && trimmedSearch.length > 0 && candidates.length === 0;
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="add-project-member-title">
@@ -204,7 +245,7 @@ function AddProjectMemberDialog({
         <header className="panel-header">
           <div className="stack gap-sm">
             <h2 id="add-project-member-title">Add member</h2>
-            <p className="panel-copy">Grant project membership by user ID without leaving the current access workspace.</p>
+            <p className="panel-copy">Search by name or email to grant project membership without leaving the current access workspace.</p>
           </div>
           <button aria-label="Close add member dialog" className="button ghost" onClick={onClose} type="button">
             <X size={16} />
@@ -213,19 +254,62 @@ function AddProjectMemberDialog({
 
         {error ? <div className="banner error">{buildErrorMessage(error)}</div> : null}
 
-        <label className="field">
-          <span>User ID</span>
-          <input
-            onChange={(event) => onChangeUserId(event.target.value)}
-            placeholder="Enter a user ID"
-            value={userId}
-          />
-        </label>
+        {selectedCandidate ? (
+          <div className="member-candidate-selected">
+            <div className="stack gap-sm">
+              <strong>{selectedCandidate.display_name}</strong>
+              <span className="muted">{selectedCandidate.email}</span>
+            </div>
+            <button className="button ghost" onClick={() => onSelectCandidate(null)} type="button">
+              Change
+            </button>
+          </div>
+        ) : (
+          <>
+            <label className="field">
+              <span>Search by name or email</span>
+              <input
+                autoFocus
+                onChange={(event) => onChangeSearch(event.target.value)}
+                placeholder="e.g. Ada Lovelace or ada@example.com"
+                value={search}
+              />
+            </label>
+
+            {candidatesError ? (
+              <div className="banner error">Unable to search for users right now.</div>
+            ) : null}
+            {candidatesLoading ? <p className="muted">Searching...</p> : null}
+            {showEmptyResultsHint ? (
+              <p className="muted">No eligible users match "{trimmedSearch}".</p>
+            ) : null}
+            {trimmedSearch.length === 0 ? (
+              <p className="field-hint">Type at least one character to search for a user to add.</p>
+            ) : null}
+
+            {candidates.length > 0 ? (
+              <ul className="member-candidate-list">
+                {candidates.map((candidate) => (
+                  <li key={candidate.id}>
+                    <button
+                      className="member-candidate-option"
+                      onClick={() => onSelectCandidate(candidate)}
+                      type="button"
+                    >
+                      <strong>{candidate.display_name}</strong>
+                      <span className="muted">{candidate.email}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </>
+        )}
 
         <div className="action-row">
           <button
             className="button primary"
-            disabled={isPending || !canManageMembers || !userId.trim()}
+            disabled={isPending || !canManageMembers || !selectedCandidate}
             onClick={onSubmit}
             type="button"
           >

@@ -1340,6 +1340,47 @@ th {
   width: min(100%, 560px);
 }
 
+.member-candidate-list {
+  display: grid;
+  gap: var(--space-2);
+  max-height: 240px;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.member-candidate-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, white 10%, var(--border) 90%);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, #fff8ef 6%, var(--surface-hover) 94%);
+  text-align: left;
+  cursor: pointer;
+}
+
+.member-candidate-option:hover,
+.member-candidate-option:focus-visible {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+}
+
+.member-candidate-selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, white 10%, var(--border) 90%);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, #fff8ef 6%, var(--surface-hover) 94%);
+}
+
 .project-settings-sidebar {
   display: grid;
   gap: var(--space-6);

@@ -15,6 +15,13 @@ pub struct MemberRecord {
     pub added_at: String,
 }
 
+#[derive(Debug, FromRow)]
+pub struct MemberCandidateRecord {
+    pub id: String,
+    pub email: String,
+    pub display_name: String,
+}
+
 pub async fn list(pool: &SqlitePool, project_id: &str) -> AppResult<Vec<MemberRecord>> {
     sqlx::query_as::<_, MemberRecord>(
         r#"
@@ -82,6 +89,40 @@ pub async fn add(
     .ok_or_else(|| ApiError::not_found("User was not found."))?;
 
     Ok(member)
+}
+
+// Excludes the project owner and everyone who already has access, so the picker only ever
+// offers users who are actually eligible to be added as a new member.
+pub async fn search_candidates(
+    pool: &SqlitePool,
+    project_id: &str,
+    search: &str,
+    limit: i64,
+) -> AppResult<Vec<MemberCandidateRecord>> {
+    let pattern = format!("%{}%", search.trim().to_lowercase());
+
+    sqlx::query_as::<_, MemberCandidateRecord>(
+        r#"
+        SELECT u.id, u.email, u.display_name
+        FROM users u
+        JOIN projects p ON p.id = ?2
+        WHERE u.is_active = 1
+          AND p.owner_user_id != u.id
+          AND (LOWER(u.email) LIKE ?1 OR LOWER(u.display_name) LIKE ?1)
+          AND NOT EXISTS (
+              SELECT 1 FROM user_project_access upa
+              WHERE upa.project_id = ?2 AND upa.user_id = u.id
+          )
+        ORDER BY u.display_name
+        LIMIT ?3
+        "#,
+    )
+    .bind(pattern)
+    .bind(project_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| ApiError::from_sqlx(e, "Unable to search for candidate members."))
 }
 
 pub async fn remove(pool: &SqlitePool, project_id: &str, user_id: &str) -> AppResult<()> {

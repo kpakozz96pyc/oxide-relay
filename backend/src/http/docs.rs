@@ -10,9 +10,9 @@ use crate::{
     http::{
         admin::{
             AddProjectMemberRequest, CreateUserRequest, GeneratePasswordResetLinkResponse,
-            PermissionResponse, ProjectCatalogResponse, ProjectMemberResponse,
-            ReplaceUserPermissionsRequest, UpdateUserProjectAccessRequest, UpdateUserRequest,
-            UserProjectAccessResponse, UserResponse, UserSummaryResponse,
+            MemberCandidateResponse, PermissionResponse, ProjectCatalogResponse,
+            ProjectMemberResponse, ReplaceUserPermissionsRequest, UpdateUserProjectAccessRequest,
+            UpdateUserRequest, UserProjectAccessResponse, UserResponse, UserSummaryResponse,
         },
         delivery::{
             DeliveryManifestNamespace, DeliveryManifestResponse, DeliveryMetadataLanguage,
@@ -57,6 +57,7 @@ use crate::{
         crate::http::admin::add_user_project_access,
         crate::http::admin::delete_user_project_access,
         crate::http::admin::list_project_members,
+        crate::http::admin::search_project_members,
         crate::http::admin::add_project_member,
         crate::http::admin::delete_project_member,
         crate::http::projects::list_projects,
@@ -105,6 +106,7 @@ use crate::{
         UserProjectAccessResponse,
         AddProjectMemberRequest,
         ProjectMemberResponse,
+        MemberCandidateResponse,
         ProjectResponse,
         CreateProjectRequest,
         UpdateProjectRequest,

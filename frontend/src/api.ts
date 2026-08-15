@@ -99,6 +99,12 @@ export type ProjectMember = {
   added_at: string;
 };
 
+export type MemberCandidate = {
+  id: string;
+  email: string;
+  display_name: string;
+};
+
 export type User = {
   id: string;
   email: string;

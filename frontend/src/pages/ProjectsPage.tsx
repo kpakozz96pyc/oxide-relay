@@ -41,7 +41,7 @@ export function ProjectsPage() {
           <span className="badge">{`${projects.length} ${t("projects.visible_suffix")}`}</span>
           {canCreateProjects ? (
             <button className="button primary" onClick={() => setIsCreateDialogOpen(true)} type="button">
-              New project
+              {t("projects.new_button")}
             </button>
           ) : null}
         </div>
@@ -52,8 +52,8 @@ export function ProjectsPage() {
       <article className="panel stack gap-md">
         <header className="panel-header">
           <div className="stack gap-sm">
-            <h2>Projects</h2>
-            <p className="panel-copy">Compact project directory using the same dense operational table language as the users workspace.</p>
+            <h2>{t("projects.panel.title")}</h2>
+            <p className="panel-copy">{t("projects.panel.description")}</p>
           </div>
           <span className="badge">{projects.length}</span>
         </header>
@@ -69,7 +69,7 @@ export function ProjectsPage() {
         canCreateProjects={canCreateProjects}
         open={isCreateDialogOpen}
         onClose={() => setIsCreateDialogOpen(false)}
-        onCreated={() => setPageSuccess("Project created.")}
+        onCreated={() => setPageSuccess(t("projects.create.success"))}
       />
     </section>
   );

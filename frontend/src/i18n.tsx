@@ -11,6 +11,7 @@ import {
 import enMessages from "./locales/en.json";
 import ruMessages from "./locales/ru.json";
 import srbMessages from "./locales/srb.json";
+import { pluralCategory } from "./lib/pluralize";
 
 type TranslationMessages = Record<string, string>;
 type DeliveryMetadataResponse = {
@@ -23,6 +24,10 @@ type I18nContextValue = {
   language: string;
   setLanguage: (language: string) => void;
   t: (key: string) => string;
+  // Resolves `${baseKey}_one` / `_few` / `_many` / `_other` for the current language's
+  // plural rules (e.g. Russian/Serbian one/few/many vs. English one/other), so counted
+  // strings like "1 term" / "2 termina" / "5 терминов" render with correct grammar.
+  tCount: (baseKey: string, count: number) => string;
   isLoading: boolean;
   error: string | null;
   supportedLanguages: Array<{ code: string; label: string }>;
@@ -199,16 +204,34 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     [language, messages],
   );
 
+  const tCount = useCallback(
+    (baseKey: string, count: number) => {
+      const category = pluralCategory(language, count);
+      const candidateKeys =
+        category === "other" ? [`${baseKey}_other`] : [`${baseKey}_${category}`, `${baseKey}_other`];
+      const localMessages = getLocalMessages(language);
+      for (const candidateKey of candidateKeys) {
+        const message = messages[candidateKey] ?? localMessages[candidateKey];
+        if (message !== undefined) {
+          return message;
+        }
+      }
+      return candidateKeys[0];
+    },
+    [language, messages],
+  );
+
   const value = useMemo<I18nContextValue>(
     () => ({
       language,
       setLanguage,
       t,
+      tCount,
       isLoading,
       error,
       supportedLanguages,
     }),
-    [error, isLoading, language, setLanguage, supportedLanguages, t],
+    [error, isLoading, language, setLanguage, supportedLanguages, t, tCount],
   );
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

@@ -948,7 +948,7 @@ describe("App routing", () => {
 
     renderApp(["/projects/demo-project"]);
 
-    expect(await screen.findByText("Member workspace")).toBeInTheDocument();
+    expect(await screen.findByText("project.badges.member_workspace")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "Access" }));
@@ -1139,7 +1139,7 @@ describe("App routing", () => {
 
     renderApp(["/users"]);
 
-    expect(await screen.findByRole("heading", { name: "Users and permissions" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "users.title" })).toBeInTheDocument();
 
     await user.type(screen.getByRole("textbox", { name: "Search users" }), "member");
     await user.selectOptions(screen.getByRole("combobox", { name: "Project" }), "website");
@@ -1275,7 +1275,7 @@ describe("App routing", () => {
 
     renderApp(["/users"]);
 
-    expect(await screen.findByRole("heading", { name: "Users and permissions" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "users.title" })).toBeInTheDocument();
     expect(screen.getByRole("row", { name: /Administrator/ })).toBeInTheDocument();
 
     await user.type(screen.getByRole("textbox", { name: "Search users" }), "nomatch");

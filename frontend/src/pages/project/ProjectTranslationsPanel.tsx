@@ -47,7 +47,7 @@ export function ProjectTranslationsPanel({
   namespaces: Namespace[];
   environments: Environment[];
 }) {
-  const { t } = useTranslation();
+  const { t, tCount } = useTranslation();
   const permissionSet = usePermissionSet();
   const queryClient = useQueryClient();
   const translationGridRef = useRef<HTMLDivElement | null>(null);
@@ -1009,7 +1009,7 @@ export function ProjectTranslationsPanel({
           ) : null}
           <div className="pagination-bar">
             <span className="muted">
-              {`${t("project.pagination.page")} ${page} ${t("project.pagination.of")} ${totalPages} · ${totalTranslationRows} ${t("project.pagination.terms")}`}
+              {`${t("project.pagination.page")} ${page} ${t("project.pagination.of")} ${totalPages} · ${totalTranslationRows} ${tCount("project.pagination.terms", totalTranslationRows)}`}
             </span>
             <div className="action-row">
               <button

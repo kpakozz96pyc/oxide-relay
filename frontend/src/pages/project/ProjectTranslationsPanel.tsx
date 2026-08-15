@@ -702,7 +702,7 @@ export function ProjectTranslationsPanel({
       {translationsQuery.isLoading ? <p className="muted">{t("project.translations.loading")}</p> : null}
       {translationsQuery.isError ? <div className="banner error">{buildErrorMessage(translationsQuery.error)}</div> : null}
 
-      {translationsQuery.data ? (
+      {canReadCurrentEnvironment && translationsQuery.data ? (
         <>
           {createMutation.isError ? (
             <div className="banner error">{buildErrorMessage(createMutation.error)}</div>

@@ -2617,6 +2617,198 @@ async fn translation_crud_import_export_and_environment_acl_work() {
 }
 
 #[tokio::test]
+async fn write_only_translation_permissions_cannot_disclose_values_without_read_translations() {
+    let harness = TestHarness::new().await;
+    let owner_id = harness
+        .insert_user(
+            "wo-owner@example.com",
+            "owner-password",
+            "Write Only Owner",
+            true,
+        )
+        .await;
+    let member_id = harness
+        .insert_user(
+            "wo-member@example.com",
+            "member-password",
+            "Write Only Member",
+            true,
+        )
+        .await;
+    let project_id = harness
+        .insert_project(&owner_id, "Write Only Project", "write-only-project")
+        .await;
+    harness.add_project_access(&owner_id, &project_id).await;
+    harness.add_project_access(&member_id, &project_id).await;
+    harness.insert_namespace(&project_id, "common").await;
+    harness.insert_language(&project_id, "ru", "Russian").await;
+    harness
+        .insert_environment(&project_id, "Production", "production")
+        .await;
+
+    let owner_cookie = harness.login("wo-owner@example.com", "owner-password").await;
+    let seed_create = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/write-only-project/translations")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, owner_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "environment": "production",
+                        "language": "ru",
+                        "namespace": "common",
+                        "key": "button.save",
+                        "value": "Секретное значение",
+                        "description": "Save button"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(seed_create.status(), StatusCode::CREATED);
+    let seeded = json_body(seed_create).await;
+    let translation_value_id = seeded["id"].as_str().expect("translation id").to_owned();
+
+    // Grant every write permission but withhold ReadTranslations, matching the QA report:
+    // an actor who can edit/export must not be able to recover translation values through
+    // those write-only endpoints.
+    harness
+        .assign_permissions(
+            &member_id,
+            &[
+                "EditTranslations",
+                "ExportTranslations",
+                "DeleteTranslations",
+                "EditProd",
+            ],
+        )
+        .await;
+    let member_cookie = harness.login("wo-member@example.com", "member-password").await;
+
+    let grid_denied = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/write-only-project/translations/grid?environment=production&namespace=common&languages=ru")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(grid_denied.status(), StatusCode::FORBIDDEN);
+
+    let create_denied = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/write-only-project/translations")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "environment": "production",
+                        "language": "ru",
+                        "namespace": "common",
+                        "key": "button.cancel",
+                        "value": "Отмена"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(create_denied.status(), StatusCode::FORBIDDEN);
+    let create_denied_body = json_body(create_denied).await;
+    assert_eq!(create_denied_body["error"]["code"], "PermissionDenied");
+
+    let update_denied = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!(
+                    "/api/v1/projects/write-only-project/translations/{translation_value_id}"
+                ))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::from(json!({ "description": "Retitled" }).to_string()))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(update_denied.status(), StatusCode::FORBIDDEN);
+    let update_denied_body = json_body(update_denied).await;
+    assert_eq!(update_denied_body["error"]["code"], "PermissionDenied");
+
+    let export_denied = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/write-only-project/exports/json?environment=production&language=ru&namespace=common")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(export_denied.status(), StatusCode::FORBIDDEN);
+    let export_denied_body = json_body(export_denied).await;
+    assert_eq!(export_denied_body["error"]["code"], "PermissionDenied");
+
+    // Once ReadTranslations is granted too, the same write endpoints succeed and disclose
+    // values as expected.
+    harness.assign_permissions(&member_id, &["ReadTranslations"]).await;
+
+    let grid_allowed = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/write-only-project/translations/grid?environment=production&namespace=common&languages=ru")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(grid_allowed.status(), StatusCode::OK);
+
+    let create_allowed = harness
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/write-only-project/translations")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::from(
+                    json!({
+                        "environment": "production",
+                        "language": "ru",
+                        "namespace": "common",
+                        "key": "button.cancel",
+                        "value": "Отмена"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(create_allowed.status(), StatusCode::CREATED);
+
+    let export_allowed = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/projects/write-only-project/exports/json?environment=production&language=ru&namespace=common")
+                .header(header::COOKIE, member_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(export_allowed.status(), StatusCode::OK);
+    let exported = json_body(export_allowed).await;
+    assert_eq!(exported["button.save"], "Секретное значение");
+}
+
+#[tokio::test]
 async fn translation_create_and_update_apply_the_same_validation_limits() {
     let (harness, owner_cookie, _) = translation_validation_setup().await;
     let create_path = "/api/v1/projects/validation-project/translations";

@@ -152,6 +152,7 @@ pub async fn create_translation(
     Json(payload): Json<CreateTranslationRequest>,
 ) -> AppResult<(StatusCode, Json<TranslationResponse>)> {
     let project = auth::authorize_project(&state, &user, &project_slug, "EditTranslations").await?;
+    require_read_translations(&state, &user, &project).await?;
     let validated = validate_create_translation(&payload)?;
     auth::require_environment_permission(
         &state,
@@ -200,6 +201,7 @@ pub async fn update_translation(
     Json(payload): Json<UpdateTranslationRequest>,
 ) -> AppResult<Json<TranslationResponse>> {
     let project = auth::authorize_project(&state, &user, &project_slug, "EditTranslations").await?;
+    require_read_translations(&state, &user, &project).await?;
     let validated = validate_update_translation(&payload)?;
 
     let existing = translations::find_by_id(&state.pool, &project.id, &translation_value_id).await?;
@@ -325,6 +327,7 @@ pub async fn export_translations(
     let namespace_name = required_non_empty(&query.namespace, "Namespace is required.")?;
 
     let project = auth::authorize_project(&state, &user, &project_slug, "ExportTranslations").await?;
+    require_read_translations(&state, &user, &project).await?;
     auth::require_environment_permission(
         &state,
         &user,
@@ -344,6 +347,23 @@ pub async fn export_translations(
     .await?;
 
     Ok(Json(values))
+}
+
+/// Blocks responses that would disclose translation values to a caller who doesn't hold
+/// `ReadTranslations`. Write-only permissions (EditTranslations/ExportTranslations/...) are
+/// intentionally decoupled from read access in the permission model, but every endpoint here
+/// that echoes a translation `value` back to the caller must still gate on read access, or a
+/// write-only actor could recover protected content through create/update/export responses.
+async fn require_read_translations(
+    state: &AppState,
+    user: &AuthenticatedUser,
+    project: &auth::AuthorizedProject,
+) -> AppResult<()> {
+    if project.is_owner {
+        return Ok(());
+    }
+
+    auth::require_permission(state, &user.id, "ReadTranslations").await
 }
 
 // ---------------------------------------------------------------------------

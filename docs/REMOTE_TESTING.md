@@ -20,7 +20,7 @@ The target is to confirm:
 - `compose.yaml` - preferred local container startup path
 - `.env.example` - example runtime configuration for Docker Compose
 - `deploy/Dockerfile` - production container image
-- `deploy/OPERATIONS.md` - runtime and operational notes
+- [deploy/OPERATIONS.md](../deploy/OPERATIONS.md) - runtime and operational notes
 - `backend/config.toml.example` - local example config
 
 ## Prerequisites

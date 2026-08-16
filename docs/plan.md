@@ -3,7 +3,7 @@
 ## Planning Principles
 
 - Build the backend first, because the frontend depends on stable API contracts.
-- Keep the MVP aligned with `readme.md`, `architecture.md`, and `database.md`.
+- Keep the MVP aligned with [readme.md](../readme.md), [architecture.md](architecture.md), and [database.md](database.md).
 - Deliver the system in vertical slices where each slice is testable.
 - Avoid adding non-MVP features such as roles, audit log, API keys, or publishing workflows.
 

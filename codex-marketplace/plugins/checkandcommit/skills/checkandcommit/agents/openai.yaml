@@ -1,4 +1,0 @@
-interface:
-  display_name: "Check and Commit"
-  short_description: "Validate docs, tests, and commit changes"
-  default_prompt: "Use $checkandcommit to validate and commit current OxideRelay changes."

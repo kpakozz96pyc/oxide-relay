@@ -65,7 +65,11 @@ function renderPanel(putResponder: () => Response) {
     </QueryClientProvider>,
   );
 
-  return { fetchMock };
+  // Every "Save permissions" click confirms first (OXR-77); default to confirming so
+  // existing save-flow tests don't need to know about the dialog unless they're testing it.
+  const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  return { fetchMock, confirmSpy };
 }
 
 afterEach(() => {
@@ -115,5 +119,48 @@ describe("SelectedUserPanel permission save feedback (OXR-65)", () => {
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
     });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("SelectedUserPanel permission save confirmation (OXR-77)", () => {
+  it("confirms before submitting any permission change, naming the affected user", async () => {
+    const user = userEvent.setup();
+    const { fetchMock, confirmSpy } = renderPanel(() => jsonResponse({}));
+
+    await user.click(screen.getByRole("button", { name: "Permissions" }));
+    await user.click(screen.getByRole("checkbox", { name: /ReadTranslations/ }));
+    await user.click(screen.getByRole("button", { name: "Save permissions" }));
+
+    expect(confirmSpy).toHaveBeenCalledWith('Save permission changes for "Member One"?');
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            new URL(String(input), "http://localhost").pathname ===
+              `/api/v1/users/${selectedUser.id}/permissions` && init?.method === "PUT",
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("does not submit the permission change when the confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    const { fetchMock, confirmSpy } = renderPanel(() => jsonResponse({}));
+    confirmSpy.mockReturnValue(false);
+
+    await user.click(screen.getByRole("button", { name: "Permissions" }));
+    await user.click(screen.getByRole("checkbox", { name: /ReadTranslations/ }));
+    await user.click(screen.getByRole("button", { name: "Save permissions" }));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          new URL(String(input), "http://localhost").pathname ===
+            `/api/v1/users/${selectedUser.id}/permissions` && init?.method === "PUT",
+      ),
+    ).toBe(false);
+    // The checkbox stays checked: cancelling the save leaves the in-progress draft intact.
+    expect(screen.getByRole("checkbox", { name: /ReadTranslations/ })).toBeChecked();
   });
 });

@@ -242,6 +242,27 @@ ManagePermissions
 
 It does not allow creating new permission codes at runtime.
 
+### Administrator Safety
+
+The system enforces that at least one active user keeps `ManageUsers`, and
+that at least one active user keeps `ManagePermissions`, checked
+independently. Deactivating, deleting, or stripping either permission from
+the last active holder of that specific permission is blocked, even if the
+target still holds the other one. Losing the last `ManagePermissions` holder
+is unrecoverable without direct database access: initial-admin bootstrap only
+runs once, against an empty `users` table, and the CLI's only recovery
+command is `password-reset-link`, which restores account access, not
+permissions.
+
+Self-revoke (removing your own `ManageUsers`/`ManagePermissions`) and
+peer-admin changes (removing another active administrator's) are both
+allowed as long as the invariant above holds — there is no separate
+administrator tier or additional permission required. The admin UI requires
+an explicit confirmation before submitting any permission change, regardless
+of which permissions are affected.
+
+See OXR-75 for the full policy analysis and OXR-77 for the implementation.
+
 ### Password Recovery
 
 Current password recovery flow is administrator-driven.

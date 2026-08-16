@@ -397,6 +397,27 @@ Required simultaneously.
 
 ---
 
+# Administrator Safety Invariants
+
+Decided in OXR-75, implemented in OXR-77.
+
+`ManageUsers` and `ManagePermissions` are each protected independently: no
+deactivate, delete, or permission-replacement operation may leave the system
+with zero active holders of either one, regardless of the other's state.
+Prior to OXR-77, only `ManageUsers` was guarded, which allowed the last
+`ManagePermissions` holder to strip it from themselves while keeping
+`ManageUsers` — an unrecoverable state, since bootstrap only re-runs against
+an empty `users` table and the CLI has no permission-repair command.
+
+Self-revoke and peer-admin permission changes are allowed (flat model, no
+administrator hierarchy) as long as the invariant above holds. The frontend
+requires explicit confirmation before submitting any permission change.
+
+The guard is re-checked inside the same `BEGIN IMMEDIATE` transaction as the
+write it protects, so concurrent admin mutations cannot race past it.
+
+---
+
 # Project Access
 
 Users only see assigned projects.

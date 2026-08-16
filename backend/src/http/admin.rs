@@ -125,7 +125,7 @@ pub async fn update_user(
 
     let result = async {
         if payload.is_active == Some(false) {
-            guard_last_active_administrator_in_connection(&mut connection, &user_id).await?;
+            guard_last_active_administrators_in_connection(&mut connection, &user_id).await?;
         }
 
         users::update_in_connection(
@@ -170,7 +170,7 @@ pub async fn delete_user(
     let mut connection = begin_immediate(&state.pool).await?;
 
     let result = async {
-        guard_last_active_administrator_in_connection(&mut connection, &user_id).await?;
+        guard_last_active_administrators_in_connection(&mut connection, &user_id).await?;
         users::delete_in_connection(&mut connection, &user_id).await
     }
     .await;
@@ -300,6 +300,7 @@ pub async fn replace_user_permissions(
 
     let normalized = permissions::normalize_codes(&payload.permission_codes);
     let keeps_manage_users = normalized.iter().any(|code| code == "ManageUsers");
+    let keeps_manage_permissions = normalized.iter().any(|code| code == "ManagePermissions");
     // Resolving catalog ids is unrelated to the last-admin invariant, so it can happen
     // before the write lock is acquired.
     let permission_ids = permissions::resolve_ids(&state.pool, &normalized).await?;
@@ -307,8 +308,16 @@ pub async fn replace_user_permissions(
     let mut connection = begin_immediate(&state.pool).await?;
 
     let result = async {
+        // Checked independently: ManageUsers and ManagePermissions each need at least one
+        // active holder, and losing one is fine as long as the other's holder count isn't
+        // what hits zero.
         if !keeps_manage_users {
-            guard_last_active_administrator_in_connection(&mut connection, &user_id).await?;
+            guard_last_active_holder_in_connection(&mut connection, &user_id, "ManageUsers")
+                .await?;
+        }
+        if !keeps_manage_permissions {
+            guard_last_active_holder_in_connection(&mut connection, &user_id, "ManagePermissions")
+                .await?;
         }
 
         permissions::replace_for_user_in_connection(&mut connection, &user_id, &permission_ids)
@@ -537,41 +546,61 @@ async fn require_any_admin_permission(state: &AppState, user_id: &str) -> AppRes
     ))
 }
 
-/// Blocks removing, deactivating, or stripping ManageUsers from `user_id` when doing so
-/// would leave the system with no active user holding ManageUsers.
+/// Blocks removing, deactivating, or stripping `permission_code` from `user_id` when doing
+/// so would leave the system with no active user holding `permission_code`.
+///
+/// `ManageUsers` and `ManagePermissions` are each guarded independently (see
+/// [`guard_last_active_administrators_in_connection`] for the deactivate/delete call sites
+/// that must protect both): losing one is fine as long as the other's holder count isn't
+/// what hits zero, since either one alone left with zero active holders is unrecoverable
+/// through the UI or the CLI (which only offers password reset, not permission repair).
 ///
 /// Must be called on a connection that already holds SQLite's write lock (see
 /// [`begin_immediate`]) and re-checked inside the same transaction as the write it guards.
 /// Checking against the pool instead would leave a check-then-act gap: two concurrent
-/// deactivate/delete/permission-strip requests could each read "one other admin remains"
-/// before either write commits, and both would proceed, leaving zero administrators.
-async fn guard_last_active_administrator_in_connection(
+/// deactivate/delete/permission-strip requests could each read "one other holder remains"
+/// before either write commits, and both would proceed, leaving zero holders.
+async fn guard_last_active_holder_in_connection(
     connection: &mut SqliteConnection,
     user_id: &str,
+    permission_code: &str,
 ) -> AppResult<()> {
     let target = users::find_by_id_in_connection(connection, user_id).await?;
     if !target.is_active {
         return Ok(());
     }
 
-    let has_manage_users =
-        permissions::user_has_permission_in_connection(connection, user_id, "ManageUsers").await?;
-    if !has_manage_users {
+    let has_permission =
+        permissions::user_has_permission_in_connection(connection, user_id, permission_code)
+            .await?;
+    if !has_permission {
         return Ok(());
     }
 
-    let remaining_admins = permissions::count_other_active_users_with_permission_in_connection(
+    let remaining_holders = permissions::count_other_active_users_with_permission_in_connection(
         connection,
         user_id,
-        "ManageUsers",
+        permission_code,
     )
     .await?;
-    if remaining_admins == 0 {
-        return Err(ApiError::validation(
-            "Cannot remove the last active administrator. At least one active user must keep the ManageUsers permission.",
-        ));
+    if remaining_holders == 0 {
+        return Err(ApiError::validation(format!(
+            "Cannot remove the last active administrator. At least one active user must keep the {permission_code} permission.",
+        )));
     }
 
+    Ok(())
+}
+
+/// Deactivate/delete guard covering both administrator-tier permissions: blocks the
+/// operation if `user_id` is the last active holder of `ManageUsers`, of
+/// `ManagePermissions`, or both.
+async fn guard_last_active_administrators_in_connection(
+    connection: &mut SqliteConnection,
+    user_id: &str,
+) -> AppResult<()> {
+    guard_last_active_holder_in_connection(connection, user_id, "ManageUsers").await?;
+    guard_last_active_holder_in_connection(connection, user_id, "ManagePermissions").await?;
     Ok(())
 }
 

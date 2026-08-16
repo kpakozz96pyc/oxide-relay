@@ -2185,7 +2185,10 @@ async fn last_active_administrator_cannot_be_removed_deactivated_or_stripped_of_
     let strip_sole_admin_body = json_body(strip_sole_admin).await;
     assert_eq!(strip_sole_admin_body["error"]["code"], "ValidationError");
 
-    // Once a second active user holds ManageUsers, the guard no longer blocks the first admin.
+    // Once a second active user holds ManageUsers AND ManagePermissions, the guard no longer
+    // blocks the first admin. The bootstrap admin holds both, so the replacement must cover
+    // both too, or deactivating the first admin would still be blocked for leaving zero
+    // active ManagePermissions holders even though ManageUsers is covered.
     let second_admin_id = harness
         .insert_user("second-admin@example.com", "second-password", "Second Admin", true)
         .await;
@@ -2197,7 +2200,7 @@ async fn last_active_administrator_cannot_be_removed_deactivated_or_stripped_of_
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::COOKIE, admin_cookie.as_str())
                 .body(Body::from(
-                    json!({ "permission_codes": ["ManageUsers"] }).to_string(),
+                    json!({ "permission_codes": ["ManageUsers", "ManagePermissions"] }).to_string(),
                 ))
                 .expect("request"),
         )
@@ -2262,6 +2265,9 @@ async fn concurrent_admin_removal_requests_cannot_both_bypass_the_last_admin_gua
         .expect("admin id")
         .to_owned();
 
+    // Grant both ManageUsers and ManagePermissions: the bootstrap admin holds both, and the
+    // race below must exercise both invariants together rather than have one side
+    // unconditionally lose to the (now independently guarded) ManagePermissions check.
     let second_admin_id = harness
         .insert_user("second-admin@example.com", "second-password", "Second Admin", true)
         .await;
@@ -2273,7 +2279,7 @@ async fn concurrent_admin_removal_requests_cannot_both_bypass_the_last_admin_gua
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::COOKIE, admin_cookie.as_str())
                 .body(Body::from(
-                    json!({ "permission_codes": ["ManageUsers"] }).to_string(),
+                    json!({ "permission_codes": ["ManageUsers", "ManagePermissions"] }).to_string(),
                 ))
                 .expect("request"),
         )
@@ -2355,6 +2361,178 @@ async fn concurrent_admin_removal_requests_cannot_both_bypass_the_last_admin_gua
         remaining_admins, 1,
         "the last-admin invariant must never be bypassed by racing requests"
     );
+}
+
+#[tokio::test]
+async fn last_active_manage_permissions_holder_is_protected_independently_of_manage_users() {
+    let harness = TestHarness::new().await;
+    let admin_cookie = harness.login("admin@example.com", "admin-password").await;
+
+    let list_users = harness
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/users")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    let users = json_body(list_users).await;
+    let admin_id = users
+        .as_array()
+        .expect("users array")
+        .iter()
+        .find(|user| user["email"] == "admin@example.com")
+        .expect("bootstrap admin")["id"]
+        .as_str()
+        .expect("admin id")
+        .to_owned();
+
+    // The bootstrap admin holds both ManageUsers and ManagePermissions. Stripping only
+    // ManagePermissions while keeping ManageUsers used to be allowed by the old guard
+    // (which only ever checked ManageUsers) — it must now be blocked in its own right,
+    // since it would leave zero active ManagePermissions holders.
+    let strip_manage_permissions_only = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{admin_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({ "permission_codes": ["ManageUsers", "ViewProjects"] }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(strip_manage_permissions_only.status(), StatusCode::BAD_REQUEST);
+    let strip_manage_permissions_only_body = json_body(strip_manage_permissions_only).await;
+    assert_eq!(
+        strip_manage_permissions_only_body["error"]["code"],
+        "ValidationError"
+    );
+
+    // Grant a second user ManagePermissions only (deliberately without ManageUsers), to prove
+    // the guard tracks ManagePermissions holders independently of ManageUsers holders.
+    let second_user_id = harness
+        .insert_user("second-manager@example.com", "second-password", "Second Manager", true)
+        .await;
+    let grant_manage_permissions = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{second_user_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({ "permission_codes": ["ManagePermissions"] }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(grant_manage_permissions.status(), StatusCode::NO_CONTENT);
+
+    // Now that a second active user holds ManagePermissions, stripping it from the bootstrap
+    // admin (while it keeps ManageUsers) is allowed.
+    let strip_now_allowed = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{admin_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(
+                    json!({ "permission_codes": ["ManageUsers", "ViewProjects"] }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(strip_now_allowed.status(), StatusCode::NO_CONTENT);
+
+    // The second user is now the sole active ManagePermissions holder, but has no
+    // ManageUsers at all. The old ManageUsers-only guard would not have blocked deactivating
+    // or deleting them; the ManagePermissions-aware guard must block both.
+    let deactivate_sole_manage_permissions_holder = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{second_user_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(json!({ "is_active": false }).to_string()))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(
+        deactivate_sole_manage_permissions_holder.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let delete_sole_manage_permissions_holder = harness
+        .request(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/users/{second_user_id}"))
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(
+        delete_sole_manage_permissions_holder.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    // The sole ManagePermissions holder may also not strip it from themselves.
+    let second_user_cookie = harness
+        .login("second-manager@example.com", "second-password")
+        .await;
+    let self_revoke_sole_manage_permissions = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{second_user_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, second_user_cookie.as_str())
+                .body(Body::from(json!({ "permission_codes": [] }).to_string()))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(
+        self_revoke_sole_manage_permissions.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    // Restoring a second active ManagePermissions holder unblocks all three operations.
+    let restore_admin_manage_permissions = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{admin_id}/permissions"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, second_user_cookie.as_str())
+                .body(Body::from(
+                    json!({ "permission_codes": ["ManageUsers", "ManagePermissions", "ViewProjects"] })
+                        .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(restore_admin_manage_permissions.status(), StatusCode::NO_CONTENT);
+
+    let deactivate_now_allowed = harness
+        .request(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/users/{second_user_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, admin_cookie.as_str())
+                .body(Body::from(json!({ "is_active": false }).to_string()))
+                .expect("request"),
+        )
+        .await;
+    assert_eq!(deactivate_now_allowed.status(), StatusCode::OK);
 }
 
 #[tokio::test]

@@ -263,6 +263,16 @@ export function SelectedUserPanel({
     updateProfileMutation.mutate();
   }
 
+  function savePermissions() {
+    // Permission changes can affect ManageUsers/ManagePermissions for the acting admin
+    // themselves or for another active administrator, so every save is confirmed the same
+    // way regardless of which permissions changed.
+    if (!window.confirm(`Save permission changes for "${currentUser.display_name}"?`)) {
+      return;
+    }
+    replacePermissionsMutation.mutate();
+  }
+
   return (
     <article className="panel stack gap-md users-inspector">
       <header className="panel-header">
@@ -441,7 +451,7 @@ export function SelectedUserPanel({
             <button
               className="button primary"
               disabled={!canManagePermissions || !permissionsDirty || replacePermissionsMutation.isPending}
-              onClick={() => replacePermissionsMutation.mutate()}
+              onClick={savePermissions}
               type="button"
             >
               {replacePermissionsMutation.isPending ? "Saving..." : "Save permissions"}

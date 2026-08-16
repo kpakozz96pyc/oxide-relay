@@ -55,6 +55,8 @@ Reading translations is controlled by the project-wide `ReadTranslations` permis
 
 Roles are out of scope for MVP.
 
+Permissions are global per user (`user_permissions`), not project-scoped. `user_project_access` only gates *which* projects a user's global permissions apply to — it does not carry its own permission set. Assigning permissions independently per project (e.g. editor in one project, read-only in another) is out of scope for MVP; see OXR-76 for the evaluated trade-offs. Revisit only with a concrete multi-project, per-user-role requirement, since it would require replacing the additive global-permission model rather than extending it.
+
 When a user creates a project, that user becomes the project owner and is implicitly treated as having all project-scoped and environment-scoped permissions within that project.
 
 Translation delivery endpoints are public by default. Runtime configuration can

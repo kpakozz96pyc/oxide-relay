@@ -227,6 +227,12 @@ Environment writes require `EditAll` for every environment except `production`, 
 
 There is no separate environment membership table in MVP.
 
+Direct permissions are global, not project-scoped: `user_project_access` only
+gates which projects a user's permissions apply to, it does not carry a
+per-project permission set. Assigning different permissions to the same user
+in different projects (e.g. editor in one project, read-only in another) is
+out of scope for MVP; evaluated and rejected in OXR-76.
+
 ---
 
 ## Permissions

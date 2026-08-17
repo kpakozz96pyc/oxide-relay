@@ -4,17 +4,17 @@
 
 OxideRelay — это self-hosted сервис инфраструктуры локализации.
 
-Цель проекта — предоставить централизованный механизм хранения и доставки переводов, используемых frontend-, backend- и mobile-приложениями.
+Цель проекта — предоставить централизованное хранилище и механизм доставки переводов, используемых frontend-, backend- и mobile-приложениями.
 
-MVP сфокусирован на следующем:
+MVP сосредоточен на следующем:
 
 * хранение переводов
 * управление переводами
-* контроль доступа на основе permissions
+* контроль доступа на основе разрешений
 * доставка переводов
-* простое развёртывание
+* простой деплой
 
-В первоначальном релизе OxideRelay не предназначен быть полноценной Translation Management System (`TMS`).
+OxideRelay не предназначен для того, чтобы в первом релизе быть полноценной Translation Management System (TMS).
 
 ---
 
@@ -47,40 +47,39 @@ MVP сфокусирован на следующем:
 * Cookie-based sessions
 * HTTP-only cookies
 
-Авторизация для admin API основана на permissions.
+Авторизация для admin API основана на разрешениях.
 
-В MVP доступ к проектам управляется через `user_project_access`.
+В MVP доступ к проектам контролируется через `user_project_access`.
 
-Чтение переводов управляется project-wide permission `ReadTranslations`; отдельного permission на чтение по `environment` нет. Запись переводов управляется environment-specific permission-кодами: `EditAll` покрывает все environments, кроме `production`, а для `production` требуется `EditProd`.
+Чтение переводов контролируется общим для проекта разрешением `ReadTranslations`; отдельного разрешения на чтение по environment нет. Запись переводов контролируется разрешениями, зависящими от environment: `EditAll` покрывает все environment, кроме `production`, а для `production` требуется `EditProd`.
 
 Роли не входят в scope MVP.
 
-Permissions являются глобальными для пользователя (`user_permissions`), а не project-scoped. `user_project_access` управляет только тем, *к каким* проектам применяются глобальные permissions пользователя — собственного набора permissions у него нет. Независимое назначение permissions по проектам (например, editor в одном проекте и read-only в другом) не входит в scope MVP; см. OXR-76 с оценкой trade-off'ов. Возвращаться к этому стоит только при наличии конкретного multi-project требования с per-user-role моделью, поскольку это потребует не расширения, а замены additve global-permission модели.
+Разрешения глобальны для пользователя (`user_permissions`), а не scoped по проектам. `user_project_access` определяет только *к каким* проектам применяются глобальные разрешения пользователя — собственного набора разрешений он не содержит. Назначение разных разрешений для одного и того же пользователя в разных проектах (например, editor в одном проекте и read-only в другом) не входит в scope MVP; см. OXR-76 с разбором компромиссов. Возвращаться к этому имеет смысл только при наличии конкретного требования по multi-project и per-user-role сценарию, поскольку это потребует не расширения, а замены аддитивной модели глобальных разрешений.
 
-Когда пользователь создаёт проект, он становится владельцем проекта и неявно считается имеющим все project-scoped и environment-scoped permissions внутри этого проекта.
-
-Endpoints доставки переводов по умолчанию публичны. Runtime-конфигурация может либо глобально отключить их, либо потребовать один общий Bearer token на всё развёртывание.
+Эндпоинты доставки переводов по умолчанию публичны. Runtime-конфигурация может
+либо глобально отключить их, либо потребовать один общий deployment-wide Bearer token.
 
 Per-client API keys, identity и token scopes не входят в scope MVP.
 
 ## API
 
 * REST API
-* OpenAPI documentation
+* OpenAPI-документация
 
-## Deployment
+## Деплой
 
 * Docker Compose
 * Docker
 * Native binary
 
-## Storage
+## Хранилище
 
 * SQLite
 
-## Import / Export
+## Импорт / Экспорт
 
-* JSON only
+* только JSON
 
 ---
 
@@ -88,8 +87,8 @@ Per-client API keys, identity и token scopes не входят в scope MVP.
 
 ```text
                  ┌────────────────────┐
-                 │    Admin Web UI    │
-                 │ React + TypeScript  │
+                 │   Admin Web UI     │
+                 │ React + TypeScript │
                  └─────────┬──────────┘
                            │
                            │ HTTP
@@ -102,7 +101,7 @@ Per-client API keys, identity и token scopes не входят в scope MVP.
 │  └───────────────────────────────────────────────┘  │
 │                                                     │
 │  ┌───────────────────────────────────────────────┐  │
-│  │              Admin REST API                   │  │
+│  │               Admin REST API                  │  │
 │  └───────────────────────────────────────────────┘  │
 │                                                     │
 │  ┌───────────────────────────────────────────────┐  │
@@ -114,7 +113,7 @@ Per-client API keys, identity и token scopes не входят в scope MVP.
 │  └───────────────────────────────────────────────┘  │
 │                                                     │
 │  ┌───────────────────────────────────────────────┐  │
-│  │               Domain Services                 │  │
+│  │              Domain Services                  │  │
 │  └───────────────────────────────────────────────┘  │
 │                                                     │
 │  ┌───────────────────────────────────────────────┐  │
@@ -124,7 +123,7 @@ Per-client API keys, identity и token scopes не входят в scope MVP.
                            │
                            ▼
                     ┌────────────┐
-                    │  SQLite DB │
+                    │ SQLite DB  │
                     └────────────┘
 ```
 
@@ -132,7 +131,7 @@ Per-client API keys, identity и token scopes не входят в scope MVP.
 
 # Доменная модель
 
-## Project
+## Проект
 
 Логическая группа переводов.
 
@@ -156,7 +155,7 @@ updated_at
 
 ---
 
-## Language
+## Язык
 
 Поддерживаемая locale внутри проекта.
 
@@ -209,7 +208,7 @@ profile
 
 ## Environment
 
-Область действия переводов.
+Область действия перевода.
 
 Поля:
 
@@ -222,7 +221,7 @@ created_at
 updated_at
 ```
 
-Environment'ы по умолчанию:
+Environment по умолчанию:
 
 ```text
 development
@@ -232,7 +231,7 @@ production
 
 ---
 
-## Translation Key
+## Ключ перевода
 
 Поля:
 
@@ -256,7 +255,7 @@ required
 
 ---
 
-## Translation Value
+## Значение перевода
 
 Поля:
 
@@ -283,7 +282,7 @@ environment_id
 
 ---
 
-## User
+## Пользователь
 
 Поля:
 
@@ -299,9 +298,9 @@ updated_at
 
 ---
 
-## Permission
+## Разрешение
 
-Permissions — основной механизм авторизации.
+Разрешения — это основной механизм авторизации.
 
 Поля:
 
@@ -313,7 +312,7 @@ description
 
 ---
 
-# Permissions
+# Разрешения
 
 ## Управление пользователями
 
@@ -322,7 +321,7 @@ ManageUsers
 ManagePermissions
 ```
 
-## Projects
+## Проекты
 
 ```text
 CreateProjects
@@ -332,7 +331,7 @@ ViewProjects
 ManageProjectMembers
 ```
 
-## Translations
+## Переводы
 
 ```text
 ReadTranslations
@@ -349,18 +348,18 @@ EditAll
 EditProd
 ```
 
-Отдельного permission на чтение по `environment` нет; `ReadTranslations` уже покрывает все environments. `EditAll` покрывает все environments, кроме `production`, а для `production` требуется `EditProd`.
+Отдельного разрешения на чтение по environment нет; `ReadTranslations` уже покрывает каждый environment. `EditAll` покрывает все environment, кроме `production`, а для `production` требуется `EditProd`.
 
-## Future
+## Будущее
 
 ```text
 PublishTranslations
 RollbackTranslations
 ```
 
-Каталог permissions seed'ится при startup и в MVP является immutable.
+Каталог разрешений seed-ится при startup и неизменяем в MVP.
 
-`ManagePermissions` позволяет назначать и снимать прямые user permissions, но не создавать новые permission-коды.
+`ManagePermissions` позволяет назначать и снимать прямые пользовательские разрешения, но не создавать новые permission codes.
 
 ---
 
@@ -369,17 +368,17 @@ RollbackTranslations
 Проверки авторизации выполняются в следующем порядке:
 
 ```text
-1. User is authenticated
-2. If the route is project-scoped, resolve project access and project ownership
-3. Resolve the required project-scoped permission
-4. If the route targets an environment, resolve the required environment permission
+1. Пользователь аутентифицирован
+2. Если маршрут scoped по проекту, определить доступ к проекту и владение проектом
+3. Определить требуемое project-scoped разрешение
+4. Если маршрут нацелен на environment, определить требуемое разрешение для environment
 ```
 
-Для project-scoped routes владение проектом проверяется до разрешения permission.
+Для project-scoped маршрутов владение проектом оценивается до определения разрешений.
 
-Если пользователь владеет проектом, слой авторизации считает его имеющим все project-scoped и environment-scoped permissions внутри этого проекта.
+Если пользователь владеет проектом, слой авторизации считает, что у пользователя есть все project-scoped и environment-scoped разрешения внутри этого проекта.
 
-Если пользователь не владеет проектом, ему одновременно нужны и явный доступ к проекту, и требуемые direct permission-коды.
+Если пользователь не владеет проектом, ему одновременно необходимы и явный доступ к проекту, и требуемые direct permission codes.
 
 Пример:
 
@@ -392,31 +391,205 @@ EditTranslations
 EditProd
 ```
 
-Все перечисленные условия обязательны одновременно.
+Требуются одновременно.
 
 ---
 
 # Инварианты безопасности администратора
 
-Решение принято в OXR-75, реализовано в OXR-77.
+Определены в OXR-75, реализованы в OXR-77.
 
-`ManageUsers` и `ManagePermissions` защищаются независимо друг от друга: ни одна операция деактивации, удаления или замены permissions не должна оставлять систему без активных обладателей хотя бы одного из этих permission'ов, независимо от состояния другого. До OXR-77 защищался только `ManageUsers`, что позволяло последнему обладателю `ManagePermissions` снять этот permission с самого себя, сохранив `ManageUsers` — это приводило к невосстанавливаемому состоянию, поскольку bootstrap повторно выполняется только для пустой таблицы `users`, а у CLI нет команды восстановления permissions.
+`ManageUsers` и `ManagePermissions` защищаются независимо: никакая операция деактивации, удаления или замены набора разрешений не должна оставлять систему без активных обладателей хотя бы одного из этих разрешений, независимо от состояния второго. До OXR-77 защищался только `ManageUsers`, что позволяло последнему обладателю `ManagePermissions` снять его у самого себя, сохранив `ManageUsers` — это состояние нельзя восстановить, поскольку bootstrap повторно выполняется только для пустой таблицы `users`, а CLI не имеет команды для ремонта разрешений.
 
-Self-revoke и изменение permissions у других администраторов допускаются (flat model, без administrator hierarchy), пока сохраняется инвариант, описанный выше. Frontend требует явного подтверждения перед отправкой любого изменения permissions.
+Self-revoke и изменения разрешений других администраторов разрешены (плоская модель, без иерархии администраторов), пока сохраняется описанный выше инвариант. Frontend требует явного подтверждения перед отправкой любого изменения разрешений.
 
-Проверка защиты повторно выполняется внутри той же транзакции `BEGIN IMMEDIATE`, что и сама защищаемая запись, поэтому конкурентные запросы не могут обойти инвариант из-за устаревшего предварительного состояния. Frontend-подтверждение улучшает UX, но backend остаётся источником истины.
+Защита повторно проверяется внутри той же транзакции `BEGIN IMMEDIATE`, что и защищаемая запись, поэтому конкурентные мутации администраторов не могут обойти её гонкой.
 
 ---
 
-# Admin REST API
+# Доступ к проекту
 
-Admin REST API покрывает управление сессиями, пользователями, проектами и проектными ресурсами: языками, `namespace`, `environment`, ключами перевода и значениями переводов. Для MVP сюда также входят `JSON` import/export и управление project access через `user_project_access`.
+Пользователи видят только назначенные им проекты.
 
-Project-scoped endpoints строятся вокруг `project_slug` и используют ту же модель авторизации, что описана выше: владелец проекта проходит проверки автоматически, для остальных одновременно требуются и доступ к проекту, и соответствующие direct permission-коды.
+Таблица:
 
-Сессионная аутентификация использует cookie-based session. Frontend работает с admin API по `HTTP`, а write-операции на project-scoped и user-scoped маршрутах дополнительно защищаются соответствующими permission-кодами.
+```text
+UserProjectAccess
 
-## User Management
+user_id
+project_id
+created_at
+```
+
+---
+
+# Владение проектом
+
+Создатель проекта автоматически становится его владельцем.
+
+Владелец проекта может:
+
+* управлять участниками проекта
+* выдавать доступ к проекту
+* управлять переводами проекта
+
+Без глобальных прав администратора.
+
+Это встроенное правило авторизации в MVP и оно оценивается только внутри принадлежащего пользователю проекта.
+
+Для пользователей, которые не являются владельцами, управление участниками проекта требует `ManageProjectMembers`.
+
+---
+
+# Дизайн API
+
+Base URL:
+
+```text
+/api/v1
+```
+
+Project-scoped admin-маршруты используют `project_slug`.
+
+Маршруты доставки переводов тоже используют `project_slug`.
+
+---
+
+## Аутентификация
+
+```http
+POST /api/v1/auth/login
+POST /api/v1/auth/logout
+GET  /api/v1/me
+```
+
+---
+
+## Проекты
+
+```http
+GET    /api/v1/projects
+POST   /api/v1/projects
+
+GET    /api/v1/projects/{project_slug}
+PUT    /api/v1/projects/{project_slug}
+DELETE /api/v1/projects/{project_slug}
+```
+
+Требуемые разрешения:
+
+```text
+GET    /api/v1/projects                    -> authenticated user; возвращает только проекты, которыми пользователь владеет, и проекты, к которым он назначен
+POST   /api/v1/projects                    -> CreateProjects
+GET    /api/v1/projects/{project_slug}     -> ViewProjects
+PUT    /api/v1/projects/{project_slug}     -> EditProjects
+DELETE /api/v1/projects/{project_slug}     -> DeleteProjects
+```
+
+---
+
+## Языки
+
+```http
+GET  /api/v1/projects/{project_slug}/languages
+POST /api/v1/projects/{project_slug}/languages
+
+DELETE /api/v1/projects/{project_slug}/languages/{language_code}
+```
+
+Требуемые разрешения:
+
+```text
+GET    -> ViewProjects
+POST   -> EditProjects
+DELETE -> EditProjects
+```
+
+---
+
+## Namespaces
+
+```http
+GET  /api/v1/projects/{project_slug}/namespaces
+POST /api/v1/projects/{project_slug}/namespaces
+
+DELETE /api/v1/projects/{project_slug}/namespaces/{namespace}
+```
+
+Требуемые разрешения:
+
+```text
+GET    -> ViewProjects
+POST   -> EditProjects
+DELETE -> EditProjects
+```
+
+---
+
+## Environments
+
+```http
+GET  /api/v1/projects/{project_slug}/environments
+POST /api/v1/projects/{project_slug}/environments
+
+DELETE /api/v1/projects/{project_slug}/environments/{environment_slug}
+```
+
+Требуемые разрешения:
+
+```text
+GET    -> ViewProjects
+POST   -> EditProjects
+DELETE -> EditProjects
+```
+
+---
+
+## Переводы
+
+```http
+GET  /api/v1/projects/{project_slug}/translations
+POST /api/v1/projects/{project_slug}/translations
+
+PUT /api/v1/projects/{project_slug}/translations/{translation_value_id}
+DELETE /api/v1/projects/{project_slug}/translations/{translation_value_id}
+```
+
+`translation_value_id` указывает на `translation_values.id`.
+
+Операции записи переводов ориентированы на значения: ключ перевода может существовать один раз на namespace, а каждый вариант для environment/language представлен отдельной строкой `translation_values`.
+
+`translation_keys.key` хранит только локальную часть ключа и не включает имя namespace.
+
+Требуемые разрешения:
+
+```text
+GET    -> ReadTranslations  + Read{Environment}
+POST   -> EditTranslations  + Edit{Environment}
+PUT    -> EditTranslations  + Edit{Environment}
+DELETE -> DeleteTranslations + Edit{Environment}
+```
+
+Целевой environment для чтения или записи перевода должен быть явно указан в payload запроса или в query parameters.
+
+## Delivery
+
+```http
+GET /api/v1/projects/{project_slug}/delivery-metadata?environment={environment_slug}
+GET /api/v1/projects/{project_slug}/locales/{language_code}?environment={environment_slug}
+GET /api/v1/projects/{project_slug}/delivery-manifest/{language_code}?environment={environment_slug}
+GET /static/{project_slug}/{environment_slug}/{language_code}/{namespace}.json
+```
+
+REST delivery возвращает все namespace для locale в виде плоского объекта с ключами, префиксированными namespace.
+
+Static JSON delivery возвращает один namespace на файл, поэтому ключи в ответе не содержат префикс namespace.
+
+Эндпоинты доставки не требуют admin session authentication. По умолчанию они публичны, но runtime-конфигурация может отключить всю доставку или потребовать один общий deployment-wide Bearer token.
+
+---
+
+## Пользователи
 
 ```http
 GET    /api/v1/users
@@ -425,7 +598,7 @@ PUT    /api/v1/users/{id}
 DELETE /api/v1/users/{id}
 ```
 
-Required permissions:
+Требуемые разрешения:
 
 ```text
 GET    -> ManageUsers
@@ -434,21 +607,21 @@ PUT    -> ManageUsers
 DELETE -> ManageUsers
 ```
 
-## User Authorization
+## Авторизация пользователей
 
 ```http
 GET /api/v1/users/{id}/permissions
 PUT /api/v1/users/{id}/permissions
 ```
 
-Required permissions:
+Требуемые разрешения:
 
 ```text
 GET -> ManagePermissions
 PUT -> ManagePermissions
 ```
 
-## Project Members
+## Участники проекта
 
 ```http
 GET    /api/v1/projects/{project_slug}/members
@@ -456,26 +629,26 @@ POST   /api/v1/projects/{project_slug}/members
 DELETE /api/v1/projects/{project_slug}/members/{user_id}
 ```
 
-Endpoints project membership управляют `user_project_access`.
+Эндпоинты членства в проекте управляют `user_project_access`.
 
-Required permissions:
+Требуемые разрешения:
 
 ```text
-Owner  -> always allowed inside the owned project
+Owner     -> всегда разрешено внутри принадлежащего проекта
 Non-owner -> ManageProjectMembers
 ```
 
-Отдельного API membership по `environment` в MVP нет.
+Отдельного API членства по environment в MVP нет.
 
-## Non-MVP
+## Не-MVP
 
-UI для audit log, UI для settings management, publishing workflow и редактирование permission-catalog не входят в initial release.
+Audit log UI, settings management UI, publishing workflow и редактирование каталога разрешений не входят в scope первого релиза.
 
 ---
 
 # Scope MVP
 
-## Included
+## Входит
 
 * Users
 * Permissions
@@ -495,7 +668,7 @@ UI для audit log, UI для settings management, publishing workflow и ре�
 * Docker
 * Native binary
 
-## Excluded
+## Не входит
 
 * API keys for private delivery
 * Audit log
@@ -509,13 +682,13 @@ UI для audit log, UI для settings management, publishing workflow и ре�
 
 ---
 
-## Permissions
+## Разрешения
 
 ```http
 GET /api/v1/permissions
 ```
 
-Required permissions:
+Требуемые разрешения:
 
 ```text
 GET -> ManagePermissions
@@ -523,11 +696,11 @@ GET -> ManagePermissions
 
 ---
 
-# Translation Delivery API
+# API доставки переводов
 
 Backend-приложения могут получать переводы через REST.
 
-Endpoint:
+Эндпоинт:
 
 ```http
 GET /api/v1/projects/{project_slug}/locales/{language_code}?environment={environment_slug}
@@ -537,19 +710,19 @@ GET /api/v1/projects/{project_slug}/delivery-manifest/{language_code}?environmen
 Правила:
 
 * `environment` обязателен.
-* Ответ содержит переводы из всех `namespace`.
-* Ключи в `values` имеют префикс `namespace`, например `common.button.save`.
-* Endpoints доставки по умолчанию публичны, могут быть глобально отключены или защищены общим Bearer token.
-* Ключи формируются как `{namespace}.{key}`, где `key` хранится без префикса `namespace`.
-* Ответы delivery API отдают version tokens, которые можно использовать для построения immutable URL.
+* Ответ содержит переводы из всех namespace.
+* Ключи в `values` имеют префикс namespace, например `common.button.save`.
+* Эндпоинты доставки по умолчанию публичны, могут быть глобально отключены или защищены общим Bearer token.
+* Ключи строятся как `{namespace}.{key}`, где `key` хранится без префикса namespace.
+* Ответы доставки содержат version tokens, которые можно использовать для построения immutable URL.
 
 ---
 
-# Static JSON Delivery
+# Доставка статического JSON
 
-Frontend-приложения могут использовать переводы как статический `JSON`.
+Frontend-приложения могут получать переводы как статический JSON.
 
-Endpoint:
+Эндпоинт:
 
 ```http
 GET /static/{project}/{environment}/{locale}/{namespace}.json?v={version}
@@ -572,9 +745,9 @@ GET /static/hr-portal/production/ru/common.json?v=4f2f0f7f4ad6e6d1
 
 Правила:
 
-* Endpoint подчиняется общей конфигурации доступа к delivery.
-* Файл представляет ровно один `namespace`.
-* Ключи в `JSON` body не имеют префикса `namespace`.
+* Эндпоинт подчиняется общей конфигурации доступа к delivery.
+* Файл представляет ровно один namespace.
+* Ключи в JSON-body не имеют префикса namespace.
 
 Политика кэширования по умолчанию:
 
@@ -587,19 +760,19 @@ Versioned URLs:   Cache-Control: public, max-age=31536000, immutable
 
 # Аутентификация
 
-Хэширование паролей:
+Хеширование паролей:
 
 ```text
 Argon2
 ```
 
-Хранение сессии:
+Хранение сессий:
 
 ```text
 HTTP-only Cookie Session
 ```
 
-JWT в MVP не используется.
+В MVP JWT не используется.
 
 ---
 
@@ -621,18 +794,18 @@ OXIDERELAY_PORT
 OXIDERELAY_DATABASE_PATH
 ```
 
-Environment variables для bootstrap администратора:
+Environment variables для bootstrap admin:
 
 ```text
 OXIDERELAY_ADMIN_EMAIL
 OXIDERELAY_ADMIN_PASSWORD
 ```
 
-Эти переменные обязательны только при первом запуске, когда пользователей ещё нет.
+Эти переменные требуются только при первом startup, когда пользователей ещё нет.
 
-Если хотя бы один пользователь уже существует, приложение должно запускаться без них.
+Если уже существует хотя бы один пользователь, приложение должно стартовать без них.
 
-При первом запуске автоматически создаётся учётная запись администратора, если пользователей ещё нет.
+При первом startup автоматически создаётся аккаунт администратора, если пользователей не существует.
 
 ---
 
@@ -650,7 +823,7 @@ SQLx Migrations
 SQLite
 ```
 
-Приложение автоматически выполняет миграции при startup.
+Приложение автоматически запускает миграции во время startup.
 
 ---
 
@@ -664,17 +837,17 @@ SQLite
 /static/*        → Translation Delivery
 ```
 
-Неизвестные frontend routes возвращают:
+Неизвестные frontend-маршруты возвращают:
 
 ```text
 index.html
 ```
 
-для поддержки SPA navigation.
+для поддержки SPA-навигации.
 
 ---
 
-# Формат ошибок API
+# Формат API-ошибок
 
 ```json
 {
@@ -685,7 +858,7 @@ index.html
 }
 ```
 
-Поддерживаемые error-коды:
+Поддерживаемые error codes:
 
 ```text
 ValidationError
@@ -720,4 +893,4 @@ InternalError
 * Kubernetes
 * Helm
 
-Эти возможности могут быть добавлены после стабилизации core platform.
+Эти возможности могут быть добавлены после стабилизации базовой платформы.

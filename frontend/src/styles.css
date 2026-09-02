@@ -1419,6 +1419,24 @@ th {
   gap: var(--space-3);
 }
 
+.project-delivery-link-sections {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.project-delivery-filter-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.project-delivery-link-section {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid color-mix(in srgb, white 8%, var(--border) 92%);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-hover) 82%, transparent);
+}
+
 .resource-item-card,
 .project-link-card,
 .danger-box {

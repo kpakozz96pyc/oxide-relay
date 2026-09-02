@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { DeliveryManifest, Environment, Language, Namespace } from "../../api";
@@ -15,6 +16,7 @@ const languages: Language[] = [
 
 const namespaces: Namespace[] = [
   { id: "ns-1", project_id: "project-1", name: "common", created_at: "", updated_at: "" },
+  { id: "ns-2", project_id: "project-1", name: "checkout", created_at: "", updated_at: "" },
 ];
 
 const manifest: DeliveryManifest = {
@@ -28,6 +30,11 @@ const manifest: DeliveryManifest = {
       name: "common",
       version: "namespace-version-456",
       url: "/static/demo-project/production/en/common.json?v=namespace-version-456",
+    },
+    {
+      name: "checkout",
+      version: "namespace-version-789",
+      url: "/static/demo-project/production/en/checkout.json?v=namespace-version-789",
     },
   ],
 };
@@ -77,6 +84,31 @@ describe("ProjectDeliveryLinksPanel version and cache labeling (OXR-71)", () => 
     expect(screen.getByRole("link", { name: /common\.json/ })).toHaveAttribute(
       "href",
       "http://localhost:3000/static/demo-project/production/en/common.json",
+    );
+    expect(screen.queryByRole("link", { name: /checkout\.json/ })).not.toBeInTheDocument();
+  });
+
+  it("generates a namespace link from a dedicated namespace selector and section", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await screen.findByText("bundle-version-123");
+    const namespaceSection = screen.getByRole("region", { name: "Namespace endpoint" });
+    expect(within(namespaceSection).getByRole("link", { name: /common\.json/ })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Locale and manifest endpoints" })).queryByRole(
+        "link",
+        { name: /common\.json/ },
+      ),
+    ).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Namespace" }), "checkout");
+
+    expect(within(namespaceSection).queryByRole("link", { name: /common\.json/ })).not.toBeInTheDocument();
+    expect(within(namespaceSection).getByText("namespace-version-789")).toBeInTheDocument();
+    expect(within(namespaceSection).getByRole("link", { name: /checkout\.json/ })).toHaveAttribute(
+      "href",
+      "http://localhost:3000/static/demo-project/production/en/checkout.json",
     );
   });
 

@@ -62,23 +62,30 @@ afterEach(() => {
 });
 
 describe("ProjectDeliveryLinksPanel version and cache labeling (OXR-71)", () => {
-  it("labels the content version and cache behavior next to each delivery link", async () => {
+  it("shows content versions separately while linking to stable unversioned endpoints", async () => {
     renderPanel();
 
     expect(await screen.findByText("bundle-version-123")).toBeInTheDocument();
     expect(screen.getByText("namespace-version-456")).toBeInTheDocument();
 
-    const immutableLabels = screen.getAllByText("Immutable (versioned URL, cached indefinitely)");
-    // Both the locale bundle link and the namespace link resolve to versioned (immutable) URLs.
-    expect(immutableLabels.length).toBe(2);
-    expect(screen.getByText("Short-lived (revalidated via ETag on every use)")).toBeInTheDocument();
+    expect(screen.getAllByText("Short-lived (unversioned URL, revalidated via ETag)")).toHaveLength(3);
+
+    expect(screen.getByRole("link", { name: /locales\/en\?environment=production/ })).toHaveAttribute(
+      "href",
+      "http://localhost:3000/api/v1/projects/demo-project/locales/en?environment=production",
+    );
+    expect(screen.getByRole("link", { name: /common\.json/ })).toHaveAttribute(
+      "href",
+      "http://localhost:3000/static/demo-project/production/en/common.json",
+    );
   });
 
-  it("explains what a versioned URL is without exposing any configured delivery token", async () => {
+  it("explains stable links and optional versions without exposing any configured delivery token", async () => {
     renderPanel();
 
     await screen.findByText("bundle-version-123");
-    expect(screen.getByText(/pins the response/)).toBeInTheDocument();
+    expect(screen.getByText(/always resolve to the current translations/)).toBeInTheDocument();
+    expect(screen.getByText(/becomes invalid after the translations change/)).toBeInTheDocument();
     expect(screen.getByText(/deployment-wide server setting and is never shown in this UI/)).toBeInTheDocument();
     expect(screen.queryByText(/OXIDERELAY_DELIVERY_TOKEN/)).not.toBeInTheDocument();
   });

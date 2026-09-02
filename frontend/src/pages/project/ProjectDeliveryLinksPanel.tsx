@@ -47,7 +47,7 @@ export function ProjectDeliveryLinksPanel({
 
   const origin = window.location.origin;
   const localeBundleHref = deliveryManifestQuery.data?.locale_bundle_url
-    ? `${origin}${deliveryManifestQuery.data.locale_bundle_url}`
+    ? buildUnversionedHref(origin, deliveryManifestQuery.data.locale_bundle_url)
     : null;
   const deliveryManifestHref = deliveryManifestPath ? `${origin}${deliveryManifestPath}` : null;
   const namespaceLinks = namespaces
@@ -59,7 +59,7 @@ export function ProjectDeliveryLinksPanel({
         ? {
             id: namespaceItem.id,
             name: namespaceItem.name,
-            href: `${origin}${manifestItem.url}`,
+            href: buildUnversionedHref(origin, manifestItem.url),
             version: manifestItem.version,
           }
         : null;
@@ -85,14 +85,14 @@ export function ProjectDeliveryLinksPanel({
 
       <div className="banner info stack gap-sm">
         <p>
-          <strong>Versioned URL</strong> (has a <code>?v=</code> parameter): pins the response
-          to a specific content version. It is cached as immutable and never changes; a new
-          translation edit produces a new version and a new URL instead of changing this one.
+          <strong>Stable URLs</strong> below omit the <code>v</code> parameter, so they always
+          resolve to the current translations. They use short-lived caching and revalidation via
+          <code> ETag</code> / <code>If-None-Match</code>.
         </p>
         <p>
-          <strong>Unversioned URL</strong> (the delivery manifest below): always resolves to the
-          current version, so it is cached briefly and must be revalidated (via <code>ETag</code>
-          /<code>If-None-Match</code>) on every use.
+          <strong>Content version</strong> is shown separately. Add it as <code>v=&lt;version&gt;</code>
+          only when a client needs an immutable response tied to the current content; that URL
+          becomes invalid after the translations change.
         </p>
         <p>
           These endpoints are public by default. A deployment can require an{" "}
@@ -134,14 +134,12 @@ export function ProjectDeliveryLinksPanel({
       ) : (
         <div className="project-link-list">
           <DeliveryLinkCard
-            cacheMode="immutable"
             href={localeBundleHref}
             label="Locale bundle endpoint"
-            description="Resolved bundle URL returned by the current delivery manifest."
+            description="Stable bundle URL that always resolves to the current translations."
             version={deliveryManifestQuery.data?.locale_bundle_version ?? null}
           />
           <DeliveryLinkCard
-            cacheMode="short"
             href={deliveryManifestHref}
             label="Delivery manifest endpoint"
             description="Manifest response used by clients to discover namespace payloads."
@@ -153,11 +151,10 @@ export function ProjectDeliveryLinksPanel({
               <div className="project-link-list">
                 {namespaceLinks.map((item) => (
                   <DeliveryLinkCard
-                    cacheMode="immutable"
                     key={item.id}
                     href={item.href}
                     label={`${item.name}.json`}
-                    description="Resolved namespace payload URL from the manifest."
+                    description="Stable namespace URL that always resolves to the current translations."
                     version={item.version}
                   />
                 ))}
@@ -177,13 +174,11 @@ function DeliveryLinkCard({
   description,
   href,
   version,
-  cacheMode,
 }: {
   label: string;
   description: string;
   href: string | null;
   version: string | null;
-  cacheMode: "immutable" | "short";
 }) {
   if (!href) {
     return null;
@@ -197,11 +192,7 @@ function DeliveryLinkCard({
         {version ? <MetaRow label="Content version" value={version} /> : null}
         <MetaRow
           label="Cache behavior"
-          value={
-            cacheMode === "immutable"
-              ? "Immutable (versioned URL, cached indefinitely)"
-              : "Short-lived (revalidated via ETag on every use)"
-          }
+          value="Short-lived (unversioned URL, revalidated via ETag)"
         />
         <a className="project-link" href={href} rel="noreferrer" target="_blank">
           <span>{href}</span>
@@ -210,4 +201,10 @@ function DeliveryLinkCard({
       </div>
     </div>
   );
+}
+
+function buildUnversionedHref(origin: string, deliveryPath: string): string {
+  const url = new URL(deliveryPath, origin);
+  url.searchParams.delete("v");
+  return url.toString();
 }

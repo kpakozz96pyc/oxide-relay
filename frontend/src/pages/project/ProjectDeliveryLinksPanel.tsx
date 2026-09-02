@@ -17,18 +17,25 @@ export function ProjectDeliveryLinksPanel({
 }) {
   const [environment, setEnvironment] = useState("");
   const [language, setLanguage] = useState("");
+  const [namespace, setNamespace] = useState("");
 
   useEffect(() => {
-    if (!environment && environments[0]) {
-      setEnvironment(environments[0].slug);
+    if (!environments.some((item) => item.slug === environment)) {
+      setEnvironment(environments[0]?.slug ?? "");
     }
   }, [environment, environments]);
 
   useEffect(() => {
-    if (!language && languages[0]) {
-      setLanguage(languages[0].code);
+    if (!languages.some((item) => item.code === language)) {
+      setLanguage(languages[0]?.code ?? "");
     }
   }, [language, languages]);
+
+  useEffect(() => {
+    if (!namespaces.some((item) => item.name === namespace)) {
+      setNamespace(namespaces[0]?.name ?? "");
+    }
+  }, [namespace, namespaces]);
 
   const deliveryManifestPath = useMemo(() => {
     if (!projectSlug || !environment || !language) {
@@ -50,23 +57,13 @@ export function ProjectDeliveryLinksPanel({
     ? buildUnversionedHref(origin, deliveryManifestQuery.data.locale_bundle_url)
     : null;
   const deliveryManifestHref = deliveryManifestPath ? `${origin}${deliveryManifestPath}` : null;
-  const namespaceLinks = namespaces
-    .map((namespaceItem) => {
-      const manifestItem = deliveryManifestQuery.data?.namespaces.find(
-        (entry) => entry.name === namespaceItem.name,
-      );
-      return manifestItem
-        ? {
-            id: namespaceItem.id,
-            name: namespaceItem.name,
-            href: buildUnversionedHref(origin, manifestItem.url),
-            version: manifestItem.version,
-          }
-        : null;
-    })
-    .filter(
-      (item): item is { id: string; name: string; href: string; version: string } => item !== null,
-    );
+  const namespaceManifestItem = deliveryManifestQuery.data?.namespaces.find(
+    (entry) => entry.name === namespace,
+  );
+  const namespaceHref =
+    projectSlug && environment && language && namespace
+      ? buildNamespaceHref(origin, projectSlug, environment, language, namespace)
+      : null;
 
   if (environments.length === 0 || languages.length === 0) {
     return null;
@@ -78,7 +75,7 @@ export function ProjectDeliveryLinksPanel({
         <div className="stack gap-sm">
           <h2>Delivery</h2>
           <p className="panel-copy">
-            Real delivery endpoints are shown for the selected environment and language.
+            Real delivery endpoints are shown for the selected environment, language, and namespace.
           </p>
         </div>
       </header>
@@ -102,7 +99,7 @@ export function ProjectDeliveryLinksPanel({
         </p>
       </div>
 
-      <div className="form-grid">
+      <div className="form-grid project-delivery-filter-grid">
         <label className="field">
           <span>Environment</span>
           <select value={environment} onChange={(event) => setEnvironment(event.target.value)}>
@@ -123,6 +120,21 @@ export function ProjectDeliveryLinksPanel({
             ))}
           </select>
         </label>
+        <label className="field">
+          <span>Namespace</span>
+          <select
+            value={namespace}
+            onChange={(event) => setNamespace(event.target.value)}
+            disabled={namespaces.length === 0}
+          >
+            {namespaces.length === 0 ? <option value="">No namespaces</option> : null}
+            {namespaces.map((item) => (
+              <option key={item.id} value={item.name}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {deliveryManifestQuery.isError ? (
@@ -132,37 +144,48 @@ export function ProjectDeliveryLinksPanel({
       {deliveryManifestQuery.isLoading ? (
         <p className="muted">Loading delivery endpoints...</p>
       ) : (
-        <div className="project-link-list">
-          <DeliveryLinkCard
-            href={localeBundleHref}
-            label="Locale bundle endpoint"
-            description="Stable bundle URL that always resolves to the current translations."
-            version={deliveryManifestQuery.data?.locale_bundle_version ?? null}
-          />
-          <DeliveryLinkCard
-            href={deliveryManifestHref}
-            label="Delivery manifest endpoint"
-            description="Manifest response used by clients to discover namespace payloads."
-            version={null}
-          />
-          {namespaceLinks.length > 0 ? (
-            <div className="stack gap-sm">
-              <span className="project-section-label">Namespace endpoints</span>
-              <div className="project-link-list">
-                {namespaceLinks.map((item) => (
-                  <DeliveryLinkCard
-                    key={item.id}
-                    href={item.href}
-                    label={`${item.name}.json`}
-                    description="Stable namespace URL that always resolves to the current translations."
-                    version={item.version}
-                  />
-                ))}
-              </div>
+        <div className="project-delivery-link-sections">
+          <section
+            aria-labelledby="locale-delivery-endpoints-title"
+            className="project-delivery-link-section"
+          >
+            <h3 id="locale-delivery-endpoints-title" className="project-section-label">
+              Locale and manifest endpoints
+            </h3>
+            <div className="project-link-list">
+              <DeliveryLinkCard
+                href={localeBundleHref}
+                label="Locale bundle endpoint"
+                description="Stable bundle URL that always resolves to the current translations."
+                version={deliveryManifestQuery.data?.locale_bundle_version ?? null}
+              />
+              <DeliveryLinkCard
+                href={deliveryManifestHref}
+                label="Delivery manifest endpoint"
+                description="Manifest response used by clients to discover namespace payloads."
+                version={null}
+              />
             </div>
-          ) : (
-            <p className="muted">No namespace delivery links are available for the current selection.</p>
-          )}
+          </section>
+
+          <section
+            aria-labelledby="namespace-delivery-endpoint-title"
+            className="project-delivery-link-section"
+          >
+            <h3 id="namespace-delivery-endpoint-title" className="project-section-label">
+              Namespace endpoint
+            </h3>
+            {namespaceHref ? (
+              <DeliveryLinkCard
+                href={namespaceHref}
+                label={`${namespace}.json`}
+                description="Stable namespace URL that always resolves to the current translations."
+                version={namespaceManifestItem?.version ?? null}
+              />
+            ) : (
+              <p className="muted">Add a namespace to generate its delivery link.</p>
+            )}
+          </section>
         </div>
       )}
     </section>
@@ -207,4 +230,16 @@ function buildUnversionedHref(origin: string, deliveryPath: string): string {
   const url = new URL(deliveryPath, origin);
   url.searchParams.delete("v");
   return url.toString();
+}
+
+function buildNamespaceHref(
+  origin: string,
+  projectSlug: string,
+  environment: string,
+  language: string,
+  namespace: string,
+): string {
+  const pathSegments = [projectSlug, environment, language].map(encodeURIComponent);
+  const namespaceFile = `${encodeURIComponent(namespace)}.json`;
+  return new URL(`/static/${pathSegments.join("/")}/${namespaceFile}`, origin).toString();
 }

@@ -45,8 +45,6 @@ Starting with `0.1.0`, use forward-only migrations only and do not rewrite migra
 * Backend: Rust, Axum, SQLite (via sqlx)
 * Frontend: React, TypeScript, custom CSS, [Lucide](https://lucide.dev) icons
 * No UI component library — no MUI, no Bootstrap, no other design-system framework.
-  See [docs/frontend-style-guide.md](docs/frontend-style-guide.md) for the custom CSS tokens
-  and component patterns.
 * Deployment: Docker or native binary
 
 ---
@@ -467,6 +465,8 @@ credentials.
 Quick local development:
 
 ```bash
+export OXIDERELAY_ADMIN_EMAIL=admin@example.com
+export OXIDERELAY_ADMIN_PASSWORD=replace-with-a-strong-password
 cargo run -p oxiderelay-backend -- --config backend/config.toml.example
 ```
 
@@ -490,6 +490,8 @@ testing a production-like setup, or installing the service for regular use.
 Run the backend and frontend separately:
 
 ```bash
+export OXIDERELAY_ADMIN_EMAIL=admin@example.com
+export OXIDERELAY_ADMIN_PASSWORD=replace-with-a-strong-password
 cargo run -p oxiderelay-backend -- --config backend/config.toml.example
 ```
 
@@ -557,10 +559,11 @@ This uses the published image and persists SQLite in a Docker volume.
 If you want to build the image locally:
 
 ```bash
-docker build -t oxiderelay:local .
+docker build -f deploy/Dockerfile -t oxiderelay:local .
 docker run --rm -p 8080:8080 \
+  -v oxiderelay-data:/data \
   -e OXIDERELAY_ADMIN_EMAIL=admin@example.com \
-  -e OXIDERELAY_ADMIN_PASSWORD=change-me \
+  -e OXIDERELAY_ADMIN_PASSWORD=replace-with-a-strong-password \
   oxiderelay:local
 ```
 
@@ -595,8 +598,8 @@ Response:
 
 ```json
 {
-  "version": "2025-08-03T09:31:14.431Z",
-  "translations": {
+  "version": "a1b2c3d4e5f67890",
+  "values": {
     "common.button.save": "Сохранить",
     "common.button.cancel": "Отмена"
   }
